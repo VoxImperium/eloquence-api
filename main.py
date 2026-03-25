@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from routers import analysis, legifrance as legifrance_router, payments, simulation, training, speech_analysis
+from routers import analysis, emails as emails_router, legifrance as legifrance_router, payments, simulation, training, speech_analysis
 import os
 
 load_dotenv()
@@ -18,6 +18,7 @@ app.add_middleware(
 )
 
 app.include_router(analysis.router)
+app.include_router(emails_router.router)
 app.include_router(legifrance_router.router)
 app.include_router(payments.router)
 app.include_router(simulation.router)

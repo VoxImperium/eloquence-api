@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from groq import Groq
 import httpx, os, json, re
@@ -363,55 +363,3 @@ async def rechercher(req: RechercheRequest):
     else:
         results = await search_legifrance_text(req.query)
         return {"results": results, "type": req.type, "query": req.query}
-
-@router.post("/extract-pdf")
-async def extract_pdf(file: UploadFile = File(...)):
-    """Extrait le texte d un PDF de cas pratique"""
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(400, "Fichier PDF uniquement")
-    
-    pdf_bytes = await file.read()
-    if len(pdf_bytes) > 10 * 1024 * 1024:
-        raise HTTPException(400, "PDF trop volumineux (max 10MB)")
-    
-    try:
-        import io
-        try:
-            import pypdf
-            reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
-            text = ""
-            for page in reader.pages:
-                text += page.extract_text() + "\n"
-        except ImportError:
-            # Fallback si pypdf pas installé
-            try:
-                import pdfplumber
-                with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-                    text = "\n".join([p.extract_text() or "" for p in pdf.pages])
-            except ImportError:
-                raise HTTPException(500, "Module PDF non disponible — installez pypdf")
-        
-        text = text.strip()
-        if not text:
-            raise HTTPException(422, "Impossible d extraire le texte du PDF")
-        
-        # Résumer si trop long
-        word_count = len(text.split())
-        if word_count > 2000:
-            # Résumer via Groq
-            resume = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": "Tu es un juriste expert. Résume ce cas pratique en conservant tous les faits juridiquement pertinents. Réponds en texte pur."},
-                    {"role": "user", "content": f"Résume ce cas pratique ({word_count} mots) en 400 mots maximum en conservant tous les faits importants:\n\n{text[:6000]}"}
-                ],
-                max_tokens=600, temperature=0.2,
-            ).choices[0].message.content.strip()
-            return {"text": resume, "original_length": word_count, "summarized": True}
-        
-        return {"text": text, "original_length": word_count, "summarized": False}
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f"Erreur extraction PDF: {str(e)}")

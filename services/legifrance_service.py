@@ -1,19 +1,18 @@
 """
-services/legifrance_service.py — Service Légifrance via l'API PISTE authentifiée
+services/legifrance_service.py — Service Légifrance via l'API publique (sans authentification)
 Endpoints : POST /search, GET /consult/texte/{id}
 """
 
 import logging
 import httpx
-from .piste_auth import piste_auth
 
 logger = logging.getLogger(__name__)
 
-LEGI_BASE_URL = "https://api.piste.gouv.fr/dila/legifrance/lf-engine-app"
+LEGI_BASE_URL = "https://www.legifrance.gouv.fr/api"
 
 
 class LegifranceAPIError(Exception):
-    """Erreur levée lors d'un échec de l'API Légifrance PISTE."""
+    """Erreur levée lors d'un échec de l'API Légifrance."""
 
     def __init__(self, message: str, status_code: int | None = None):
         super().__init__(message)
@@ -21,7 +20,7 @@ class LegifranceAPIError(Exception):
 
 
 class LegifranceService:
-    """Accès aux textes de loi Légifrance via l'API PISTE (OAuth 2.0)."""
+    """Accès aux textes de loi Légifrance via l'API publique (sans authentification)."""
 
     async def search_textes(
         self,
@@ -31,7 +30,7 @@ class LegifranceService:
         limit: int = 20,
     ) -> list[dict]:
         """
-        Recherche de textes de loi via l'API Légifrance PISTE.
+        Recherche de textes de loi via l'API publique Légifrance.
 
         Args:
             query: Termes de recherche.
@@ -62,23 +61,12 @@ class LegifranceService:
         logger.debug("Légifrance search: query=%r type=%r page=%d limit=%d", query, type_texte, page, limit)
 
         try:
-            headers = await piste_auth.get_headers()
             async with httpx.AsyncClient(timeout=30) as http:
                 r = await http.post(
                     f"{LEGI_BASE_URL}/search",
                     json=payload,
-                    headers=headers,
+                    headers={"Accept": "application/json", "Content-Type": "application/json"},
                 )
-                if r.status_code == 401:
-                    # Token expiré — forcer le refresh et réessayer
-                    logger.warning("Légifrance search: token expiré (401), tentative de refresh")
-                    await piste_auth.refresh_token()
-                    headers = await piste_auth.get_headers()
-                    r = await http.post(
-                        f"{LEGI_BASE_URL}/search",
-                        json=payload,
-                        headers=headers,
-                    )
                 logger.debug("Légifrance search response: HTTP %d for query=%r", r.status_code, query)
                 r.raise_for_status()
                 data = r.json()
@@ -111,7 +99,7 @@ class LegifranceService:
         Récupère le texte complet d'une loi, d'un décret ou d'un arrêté.
 
         Args:
-            texte_id: Identifiant PISTE du texte (ex: LEGITEXT000006070721).
+            texte_id: Identifiant du texte (ex: LEGITEXT000006070721).
 
         Returns:
             Dictionnaire avec les données du texte, ou None si non trouvé.
@@ -119,22 +107,12 @@ class LegifranceService:
         logger.debug("Légifrance get_texte: id=%r", texte_id)
 
         try:
-            headers = await piste_auth.get_headers()
             async with httpx.AsyncClient(timeout=30) as http:
                 r = await http.post(
                     f"{LEGI_BASE_URL}/consult/texte",
                     json={"textId": texte_id},
-                    headers=headers,
+                    headers={"Accept": "application/json", "Content-Type": "application/json"},
                 )
-                if r.status_code == 401:
-                    logger.warning("Légifrance get_texte: token expiré (401), tentative de refresh")
-                    await piste_auth.refresh_token()
-                    headers = await piste_auth.get_headers()
-                    r = await http.post(
-                        f"{LEGI_BASE_URL}/consult/texte",
-                        json={"textId": texte_id},
-                        headers=headers,
-                    )
                 if r.status_code == 404:
                     return None
                 r.raise_for_status()
@@ -162,7 +140,7 @@ class LegifranceService:
 
     @staticmethod
     def _normalize(item: dict) -> dict:
-        """Transforme une entrée brute PISTE en format uniforme."""
+        """Transforme une entrée brute en format uniforme."""
         titles = item.get("titles", [{}])
         title_obj = titles[0] if titles else {}
         return {

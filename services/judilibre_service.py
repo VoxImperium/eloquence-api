@@ -1,19 +1,18 @@
 """
-services/judilibre_service.py — Service Judilibre via l'API PISTE authentifiée
+services/judilibre_service.py — Service Judilibre via l'API publique (sans authentification)
 Endpoints : GET /search, GET /decision/{id}
 """
 
 import logging
 import httpx
-from .piste_auth import piste_auth
 
 logger = logging.getLogger(__name__)
 
-JUDILIBRE_BASE_URL = "https://api.piste.gouv.fr/cassation/judilibre/v1"
+JUDILIBRE_BASE_URL = "https://api.judilibre.io/cassation/judilibre/v1"
 
 
 class JudilibreAPIError(Exception):
-    """Erreur levée lors d'un échec de l'API Judilibre PISTE."""
+    """Erreur levée lors d'un échec de l'API Judilibre."""
 
     def __init__(self, message: str, status_code: int | None = None):
         super().__init__(message)
@@ -21,7 +20,7 @@ class JudilibreAPIError(Exception):
 
 
 class JudilibreService:
-    """Accès aux décisions de justice via l'API Judilibre PISTE (OAuth 2.0)."""
+    """Accès aux décisions de justice via l'API publique Judilibre (sans authentification)."""
 
     async def search_decisions(
         self,
@@ -35,7 +34,7 @@ class JudilibreService:
 
         Args:
             query: Termes de recherche.
-            filters: Dictionnaire optionnel de filtres PISTE :
+            filters: Dictionnaire optionnel de filtres :
                      chambre, date_start, date_end, juridiction, type.
             page: Numéro de page (commence à 0 pour Judilibre).
             limit: Nombre de résultats par page.
@@ -70,23 +69,12 @@ class JudilibreService:
         logger.debug("Judilibre search: query=%r filters=%r page=%d limit=%d", query, filters, page, limit)
 
         try:
-            headers = await piste_auth.get_headers()
             async with httpx.AsyncClient(timeout=30) as http:
                 r = await http.get(
                     f"{JUDILIBRE_BASE_URL}/search",
                     params=params,
-                    headers=headers,
+                    headers={"Accept": "application/json"},
                 )
-                if r.status_code == 401:
-                    # Token expiré — forcer le refresh et réessayer
-                    logger.warning("Judilibre search: token expiré (401), tentative de refresh")
-                    await piste_auth.refresh_token()
-                    headers = await piste_auth.get_headers()
-                    r = await http.get(
-                        f"{JUDILIBRE_BASE_URL}/search",
-                        params=params,
-                        headers=headers,
-                    )
                 logger.debug("Judilibre search response: HTTP %d for query=%r", r.status_code, query)
                 r.raise_for_status()
                 data = r.json()
@@ -119,7 +107,7 @@ class JudilibreService:
         Récupère une décision complète avec enrichissements.
 
         Args:
-            decision_id: Identifiant PISTE de la décision.
+            decision_id: Identifiant de la décision.
 
         Returns:
             Dictionnaire avec les données de la décision, ou None si non trouvée.
@@ -127,22 +115,12 @@ class JudilibreService:
         logger.debug("Judilibre get_decision: id=%r", decision_id)
 
         try:
-            headers = await piste_auth.get_headers()
             async with httpx.AsyncClient(timeout=30) as http:
                 r = await http.get(
                     f"{JUDILIBRE_BASE_URL}/decision",
                     params={"id": decision_id, "resolve_references": "true"},
-                    headers=headers,
+                    headers={"Accept": "application/json"},
                 )
-                if r.status_code == 401:
-                    logger.warning("Judilibre get_decision: token expiré (401), tentative de refresh")
-                    await piste_auth.refresh_token()
-                    headers = await piste_auth.get_headers()
-                    r = await http.get(
-                        f"{JUDILIBRE_BASE_URL}/decision",
-                        params={"id": decision_id, "resolve_references": "true"},
-                        headers=headers,
-                    )
                 if r.status_code == 404:
                     return None
                 r.raise_for_status()

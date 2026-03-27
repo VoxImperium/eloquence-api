@@ -35,6 +35,15 @@ async def call_groq_async(client, **kwargs):
     return await loop.run_in_executor(None, lambda: client.chat.completions.create(**kwargs))
 
 
+def clean_asterisks(text: str) -> str:
+    """Supprime les astérisques de remplissage (placeholders) d'un texte."""
+    if not text:
+        return ""
+    text = re.sub(r'\*+', ' ', text)
+    text = re.sub(r' {2,}', ' ', text)
+    return text.strip()
+
+
 def format_jurisprudence(j: dict) -> str:
     """Formate une jurisprudence selon le standard officiel français.
 
@@ -70,26 +79,45 @@ def format_jurisprudence(j: dict) -> str:
 
 
 async def analyser_apport_jurisprudence(faits: str, qualification: str, j: dict) -> str:
-    """Analyse via Groq l'apport d'une jurisprudence au cas pratique (2-3 phrases max)."""
-    resume = (j.get("resume", "") or "")[:400]
+    """Analyse via Groq l'apport concret d'une jurisprudence au cas pratique."""
+    resume = clean_asterisks((j.get("resume", "") or "")[:400])
     formatage = j.get("formatage_officiel", "") or format_jurisprudence(j)
+
+    cas_context = (
+        f"CAS PRATIQUE : {faits[:400]}\nQUALIFICATION JURIDIQUE : {qualification}"
+        if faits
+        else f"QUALIFICATION JURIDIQUE : {qualification or 'Non précisée'}"
+    )
 
     try:
         response = await call_groq_async(
             client,
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": "Tu es un juriste expert en droit français. Réponds en 2-3 phrases maximum, en texte pur, sans JSON."},
-                {"role": "user", "content": (
-                    f"En quoi cette jurisprudence aide-t-elle à résoudre ce cas pratique ?\n\n"
-                    f"CAS PRATIQUE : {faits[:300]}\n"
-                    f"QUALIFICATION JURIDIQUE : {qualification}\n"
-                    f"JURISPRUDENCE : {formatage}\n"
-                    f"RÉSUMÉ : {resume}\n\n"
-                    f"Réponds en 2-3 phrases maximum expliquant l'apport concret de cet arrêt pour ce cas."
-                )},
+                {
+                    "role": "system",
+                    "content": (
+                        "Tu es un juriste expert en droit français. "
+                        "Réponds en texte pur, sans JSON ni formatage Markdown. "
+                        "Sois précis, concret et analytique."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Analyse l'apport de cette jurisprudence pour le cas suivant.\n\n"
+                        f"{cas_context}\n"
+                        f"JURISPRUDENCE : {formatage}\n"
+                        f"RÉSUMÉ : {resume}\n\n"
+                        f"Rédige une analyse en 4 à 5 phrases couvrant :\n"
+                        f"1. Comment cet arrêt s'applique spécifiquement aux faits du cas.\n"
+                        f"2. Les conditions critiques posées par cet arrêt (critères, seuils, exigences).\n"
+                        f"3. La pertinence exacte de cette jurisprudence et ses éventuelles limites ou distinctions.\n"
+                        f"Sois précis sur les éléments de fait et de droit qui permettent ou empêchent l'application de cet arrêt."
+                    ),
+                },
             ],
-            max_tokens=400, temperature=0.2,
+            max_tokens=600, temperature=0.2,
         )
         return response.choices[0].message.content.strip()
     except Exception as exc:
@@ -132,12 +160,9 @@ async def search_judilibre(
     results = await openlegi_service.search_jurisprudence(query, limit=5)
     enriched = []
     for j in results:
-        j["formatage_officiel"] = format_jurisprudence(j)
-        j["resume"] = (j.get("resume") or "")[:200]
-        if faits:
-            j["apport_cas_pratique"] = await analyser_apport_jurisprudence(faits, qualification, j)
-        else:
-            j["apport_cas_pratique"] = ""
+        j["formatage_officiel"] = format_jurisprudence(j) or (f"Jurisprudence n°{j['numero']}" if j.get("numero") else "Jurisprudence (format indisponible)")
+        j["resume"] = clean_asterisks((j.get("resume") or "")[:200])
+        j["apport_cas_pratique"] = await analyser_apport_jurisprudence(faits, qualification, j)
         enriched.append(j)
     return enriched
 

@@ -1,15 +1,13 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from groq import Groq
-import httpx, os, json, re
+import os, json, re
+
+from services.legifrance_service import legifrance_service
+from services.judilibre_service import judilibre_service
 
 router = APIRouter(prefix="/legifrance", tags=["legifrance"])
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
-# APIs publiques Légifrance
-LEGI_SEARCH_URL = "https://recherche.data.gouv.fr/api/1/datasets/"
-JUDILIBRE_URL   = "https://api.piste.gouv.fr/cassation/judilibre/v1"
-CODES_URL       = "https://api.legifrance.gouv.fr/consult/code"
 
 THEMIS_SYSTEM = """Tu es "L'Éloquence de Thémis", IA experte en droit français et rhétorique classique, Avocat à la Cour et membre de l'Académie française.
 
@@ -38,59 +36,12 @@ class RechercheRequest(BaseModel):
     type: str = "jurisprudence"  # jurisprudence, code, loi
 
 async def search_judilibre(query: str, operator: str = "AND") -> list:
-    """Recherche dans la jurisprudence via Judilibre (API publique)"""
-    try:
-        async with httpx.AsyncClient(timeout=15) as http:
-            # API Judilibre - accès public pour la recherche
-            params = {
-                "query": query,
-                "operator": operator,
-                "field": ["summary", "themes"],
-                "resolve_references": "true",
-                "page_size": 5,
-            }
-            r = await http.get(
-                "https://api.piste.gouv.fr/cassation/judilibre/v1/search",
-                params=params,
-                headers={"Accept": "application/json"}
-            )
-            if r.status_code == 200:
-                data = r.json()
-                results = data.get("results", [])
-                return [{
-                    "id":       res.get("id", ""),
-                    "date":     res.get("decision_date", ""),
-                    "chambre":  res.get("chamber", ""),
-                    "solution": res.get("solution", ""),
-                    "resume":   res.get("summary", "")[:500] if res.get("summary") else "",
-                    "themes":   res.get("themes", []),
-                    "numero":   res.get("number", ""),
-                } for res in results[:5]]
-    except Exception as e:
-        print(f"Judilibre error: {e}")
-    return []
+    """Recherche dans la jurisprudence via l'API Judilibre PISTE (OAuth 2.0)."""
+    return await judilibre_service.search_decisions(query, page=1, limit=5)
 
 async def search_legifrance_text(query: str) -> list:
-    """Recherche dans les textes de loi via l'API publique"""
-    try:
-        async with httpx.AsyncClient(timeout=15) as http:
-            # Utiliser l'API de recherche Légifrance publique
-            r = await http.get(
-                "https://api.piste.gouv.fr/dila/legifrance/lf-engine-app/search",
-                params={
-                    "query": query,
-                    "searchedPage": 1,
-                    "pageSize": 5,
-                    "sort": "PERTINENCE",
-                    "typePagination": "DEFAUT",
-                },
-                headers={"Accept": "application/json"}
-            )
-            if r.status_code == 200:
-                return r.json().get("results", [])[:5]
-    except Exception as e:
-        print(f"Légifrance search error: {e}")
-    return []
+    """Recherche dans les textes de loi via l'API Légifrance PISTE (OAuth 2.0)."""
+    return await legifrance_service.search_textes(query, page=1, limit=5)
 
 async def get_article_code(code: str, article: str) -> dict:
     """Récupère un article de code via l'API"""

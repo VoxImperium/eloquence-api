@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from groq import Groq
+import asyncio
 import logging
 import os, json, re
 
@@ -10,6 +11,12 @@ from services.judilibre_service import judilibre_service
 router = APIRouter(prefix="/legifrance", tags=["legifrance"])
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 logger = logging.getLogger(__name__)
+
+
+async def call_groq_async(client, **kwargs):
+    """Wrapper pour appels Groq synchrones dans contexte async."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: client.chat.completions.create(**kwargs))
 
 THEMIS_SYSTEM = """Tu es "L'Éloquence de Thémis", IA experte en droit français et rhétorique classique, Avocat à la Cour et membre de l'Académie française.
 
@@ -90,7 +97,8 @@ async def get_article_code(code: str, article: str) -> dict:
 
 async def identifier_articles_pertinents(faits: str, domaine: str) -> list:
     """Utilise Groq pour identifier les articles pertinents au cas"""
-    raw = client.chat.completions.create(
+    response = await call_groq_async(
+        client,
         model="llama-3.3-70b-versatile",
         messages=[
             {"role": "system", "content": "Tu es un juriste expert en droit français. Tu réponds UNIQUEMENT en JSON."},
@@ -118,7 +126,8 @@ Retourne un JSON avec les éléments juridiques pertinents :
 }}"""}
         ],
         max_tokens=1500, temperature=0.2,
-    ).choices[0].message.content.strip()
+    )
+    raw = response.choices[0].message.content.strip()
 
     if raw.startswith("```"):
         raw = raw.split("\n",1)[1].rsplit("```",1)[0].strip()
@@ -156,7 +165,8 @@ async def generer_plaidoirie_themis(
     strategie    = analyse_juridique.get("strategie", "")
 
     # Appel 1 — Exorde + Narration
-    r1 = client.chat.completions.create(
+    r1_response = await call_groq_async(
+        client,
         model="llama-3.3-70b-versatile",
         messages=[
             {"role": "system", "content": THEMIS_SYSTEM},
@@ -179,10 +189,12 @@ JSON :
 }}"""},
         ],
         max_tokens=2000, temperature=0.6,
-    ).choices[0].message.content.strip()
+    )
+    r1 = r1_response.choices[0].message.content.strip()
 
     # Appel 2 — Développement juridique
-    r2 = client.chat.completions.create(
+    r2_response = await call_groq_async(
+        client,
         model="llama-3.3-70b-versatile",
         messages=[
             {"role": "system", "content": THEMIS_SYSTEM},
@@ -203,10 +215,12 @@ JSON :
 }}"""},
         ],
         max_tokens=2500, temperature=0.6,
-    ).choices[0].message.content.strip()
+    )
+    r2 = r2_response.choices[0].message.content.strip()
 
     # Appel 3 — Réfutation + Péroraison
-    r3 = client.chat.completions.create(
+    r3_response = await call_groq_async(
+        client,
         model="llama-3.3-70b-versatile",
         messages=[
             {"role": "system", "content": THEMIS_SYSTEM},
@@ -227,7 +241,8 @@ JSON :
 }}"""},
         ],
         max_tokens=2000, temperature=0.6,
-    ).choices[0].message.content.strip()
+    )
+    r3 = r3_response.choices[0].message.content.strip()
 
     def parse(raw: str) -> dict:
         raw = raw.strip()
@@ -370,14 +385,16 @@ async def extract_pdf(file: UploadFile = File(...)):
         word_count = len(text.split())
         if word_count > 2000:
             # Résumer via Groq
-            resume = client.chat.completions.create(
+            resume_response = await call_groq_async(
+                client,
                 model="llama-3.3-70b-versatile",
                 messages=[
                     {"role": "system", "content": "Tu es un juriste expert. Résume ce cas pratique en conservant tous les faits juridiquement pertinents. Réponds en texte pur."},
                     {"role": "user", "content": f"Résume ce cas pratique ({word_count} mots) en 400 mots maximum en conservant tous les faits importants:\n\n{text[:6000]}"}
                 ],
                 max_tokens=600, temperature=0.2,
-            ).choices[0].message.content.strip()
+            )
+            resume = resume_response.choices[0].message.content.strip()
             return {"text": resume, "original_length": word_count, "summarized": True}
         
         return {"text": text, "original_length": word_count, "summarized": False}

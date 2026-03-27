@@ -11,11 +11,90 @@ router = APIRouter(prefix="/legifrance", tags=["legifrance"])
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 logger = logging.getLogger(__name__)
 
+_MOIS = {
+    "01": "janvier", "02": "février", "03": "mars", "04": "avril",
+    "05": "mai", "06": "juin", "07": "juillet", "08": "août",
+    "09": "septembre", "10": "octobre", "11": "novembre", "12": "décembre",
+}
+
+_CHAMBRE_LABELS = {
+    "CHAMBRE_SOCIALE": ("sociale", "Chambre sociale"),
+    "CHAMBRE_CRIMINELLE": ("criminelle", "Chambre criminelle"),
+    "CHAMBRE_COMMERCIALE": ("commerciale", "Chambre commerciale"),
+    "CHAMBRE_CIVILE_1": ("1re civ.", "Première chambre civile"),
+    "CHAMBRE_CIVILE_2": ("2e civ.", "Deuxième chambre civile"),
+    "CHAMBRE_CIVILE_3": ("3e civ.", "Troisième chambre civile"),
+    "ASSEMBLEE_PLENIERE": ("Ass. plén.", "Assemblée plénière"),
+    "CHAMBRE_MIXTE": ("mixte", "Chambre mixte"),
+}
+
 
 async def call_groq_async(client, **kwargs):
     """Wrapper pour appels Groq synchrones dans contexte async."""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: client.chat.completions.create(**kwargs))
+
+
+def format_jurisprudence(j: dict) -> str:
+    """Formate une jurisprudence selon le standard officiel français.
+
+    Exemple : "Cour de cassation, criminelle, Chambre criminelle, 14 avril 2015, 14-83.462"
+    """
+    juridiction = j.get("juridiction", "") or "Cour de cassation"
+    chambre_raw = j.get("chambre", "") or ""
+    numero = j.get("numero", "") or ""
+    date_raw = j.get("date", "") or ""
+
+    # Normalise le nom de chambre (ex. "CHAMBRE_CRIMINELLE" → "criminelle, Chambre criminelle")
+    chambre_key = chambre_raw.upper().replace(" ", "_").replace("-", "_")
+    if chambre_key in _CHAMBRE_LABELS:
+        short, long = _CHAMBRE_LABELS[chambre_key]
+        chambre_formatted = f"{short}, {long}"
+    else:
+        chambre_formatted = chambre_raw
+
+    # Convertit la date ISO (YYYY-MM-DD) au format "jour mois année"
+    date_formatted = date_raw
+    if date_raw and len(date_raw) >= 10:
+        try:
+            parts = date_raw[:10].split("-")
+            if len(parts) == 3:
+                annee, mois_num, jour = parts
+                mois_str = _MOIS.get(mois_num, mois_num)
+                date_formatted = f"{jour.lstrip('0') or '0'} {mois_str} {annee}"
+        except Exception:
+            pass
+
+    segments = [s for s in [juridiction, chambre_formatted, date_formatted, numero] if s]
+    return ", ".join(segments)
+
+
+async def analyser_apport_jurisprudence(faits: str, qualification: str, j: dict) -> str:
+    """Analyse via Groq l'apport d'une jurisprudence au cas pratique (2-3 phrases max)."""
+    resume = (j.get("resume", "") or "")[:400]
+    formatage = j.get("formatage_officiel", "") or format_jurisprudence(j)
+
+    try:
+        response = await call_groq_async(
+            client,
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "Tu es un juriste expert en droit français. Réponds en 2-3 phrases maximum, en texte pur, sans JSON."},
+                {"role": "user", "content": (
+                    f"En quoi cette jurisprudence aide-t-elle à résoudre ce cas pratique ?\n\n"
+                    f"CAS PRATIQUE : {faits[:300]}\n"
+                    f"QUALIFICATION JURIDIQUE : {qualification}\n"
+                    f"JURISPRUDENCE : {formatage}\n"
+                    f"RÉSUMÉ : {resume}\n\n"
+                    f"Réponds en 2-3 phrases maximum expliquant l'apport concret de cet arrêt pour ce cas."
+                )},
+            ],
+            max_tokens=400, temperature=0.2,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as exc:
+        logger.warning("Erreur analyse apport jurisprudence : %s", exc)
+        return ""
 
 THEMIS_SYSTEM = """Tu es "L'Éloquence de Thémis", IA experte en droit français et rhétorique classique, Avocat à la Cour et membre de l'Académie française.
 
@@ -43,9 +122,24 @@ class RechercheRequest(BaseModel):
     query: str
     type: str = "jurisprudence"  # jurisprudence, code, loi
 
-async def search_judilibre(query: str, operator: str = "AND") -> list:
-    """Recherche dans la jurisprudence via OpenLegi MCP."""
-    return await openlegi_service.search_jurisprudence(query, limit=5)
+async def search_judilibre(
+    query: str,
+    operator: str = "AND",
+    faits: str = "",
+    qualification: str = "",
+) -> list:
+    """Recherche dans la jurisprudence via OpenLegi MCP et enrichit chaque résultat."""
+    results = await openlegi_service.search_jurisprudence(query, limit=5)
+    enriched = []
+    for j in results:
+        j["formatage_officiel"] = format_jurisprudence(j)
+        j["resume"] = (j.get("resume") or "")[:200]
+        if faits:
+            j["apport_cas_pratique"] = await analyser_apport_jurisprudence(faits, qualification, j)
+        else:
+            j["apport_cas_pratique"] = ""
+        enriched.append(j)
+    return enriched
 
 async def search_legifrance_text(query: str) -> list:
     """Recherche dans les textes de loi via OpenLegi MCP."""
@@ -155,7 +249,7 @@ async def generer_plaidoirie_themis(
     ]) or "Aucun article trouvé"
 
     juris_txt = "\n".join([
-        f"• Cass. {j.get('chambre','')} {j.get('date','')} n°{j.get('numero','')}: {j.get('resume','')[:200]}"
+        f"• {j.get('formatage_officiel') or format_jurisprudence(j)}: {j.get('resume','')[:200]}"
         for j in jurisprudence if j
     ]) or "Aucune jurisprudence trouvée"
 
@@ -313,9 +407,14 @@ async def resoudre_cas_pratique(req: CasPratiqueRequest):
 
     # Étape 3 — Rechercher la jurisprudence (dégradation gracieuse si API indisponible)
     jurisprudence = []
+    qualification_juridique = analyse.get("qualification_juridique", "")
     for terme in analyse.get("jurisprudence_rechercher", [])[:2]:
         try:
-            results = await search_judilibre(terme)
+            results = await search_judilibre(
+                terme,
+                faits=req.faits,
+                qualification=qualification_juridique,
+            )
             jurisprudence.extend(results[:2])
         except OpenLegiError as exc:
             logger.warning("OpenLegi indisponible pour terme=%r : %s", terme, exc)

@@ -11,12 +11,6 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-PISTE_OAUTH_URL = os.getenv("PISTE_OAUTH_URL", "https://piste.gouv.fr/api/oauth/token")
-PISTE_CLIENT_ID = os.getenv("PISTE_CLIENT_ID", "")
-PISTE_CLIENT_SECRET = os.getenv("PISTE_CLIENT_SECRET", "")
-TOKEN_CACHE_TTL = int(os.getenv("TOKEN_CACHE_TTL", "3600"))
-
-
 class PISTEAuth:
     """Gestion du token OAuth 2.0 PISTE avec cache mémoire et refresh automatique."""
 
@@ -41,7 +35,12 @@ class PISTEAuth:
 
     async def _fetch_token(self) -> str:
         """Appelle l'endpoint OAuth PISTE et met à jour le cache."""
-        if not PISTE_CLIENT_ID or not PISTE_CLIENT_SECRET:
+        client_id = os.getenv("PISTE_CLIENT_ID")
+        client_secret = os.getenv("PISTE_CLIENT_SECRET")
+        oauth_url = os.getenv("PISTE_OAUTH_URL", "https://piste.gouv.fr/api/oauth/token")
+        token_cache_ttl = int(os.getenv("TOKEN_CACHE_TTL", "3600"))
+
+        if not client_id or not client_secret:
             raise RuntimeError(
                 "PISTE_CLIENT_ID et PISTE_CLIENT_SECRET doivent être définis "
                 "dans les variables d'environnement."
@@ -50,11 +49,11 @@ class PISTEAuth:
         try:
             async with httpx.AsyncClient(timeout=15) as http:
                 r = await http.post(
-                    PISTE_OAUTH_URL,
+                    oauth_url,
                     data={
                         "grant_type": "client_credentials",
-                        "client_id": PISTE_CLIENT_ID,
-                        "client_secret": PISTE_CLIENT_SECRET,
+                        "client_id": client_id,
+                        "client_secret": client_secret,
                         "scope": "openid",
                     },
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
@@ -73,7 +72,7 @@ class PISTEAuth:
         if not self._token:
             raise RuntimeError(f"Réponse OAuth PISTE invalide : {data}")
 
-        expires_in = int(data.get("expires_in", TOKEN_CACHE_TTL))
+        expires_in = int(data.get("expires_in", token_cache_ttl))
         self._expires_at = time.time() + expires_in
         logger.info("Nouveau token PISTE obtenu, expire dans %ds", expires_in)
         return self._token

@@ -1,11 +1,12 @@
 # api/main.py — VERSION SEMAINE 6
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from routers import analysis, emails as emails_router, legifrance as legifrance_router, payments, simulation, training, speech_analysis
 import os
 
 load_dotenv()
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from routers import analysis, emails as emails_router, legifrance as legifrance_router, payments, simulation, training, speech_analysis
 
 app = FastAPI(title="Éloquence API", version="0.6.0")
 

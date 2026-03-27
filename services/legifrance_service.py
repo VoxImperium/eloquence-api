@@ -1,14 +1,16 @@
 """
-services/legifrance_service.py — Service Légifrance via l'API publique (sans authentification)
-Endpoints : POST /search, GET /consult/texte/{id}
+services/legifrance_service.py — Service Légifrance via l'API PISTE (OAuth 2.0)
+Endpoints : POST /search, POST /consult/texte
 """
 
 import logging
 import httpx
 
+from .piste_auth import piste_auth, PisteAuthError
+
 logger = logging.getLogger(__name__)
 
-LEGI_BASE_URL = "https://www.legifrance.gouv.fr/api"
+LEGI_BASE_URL = "https://api.aife.economie.gouv.fr/dila/legifrance/lf-engine-app"
 
 
 class LegifranceAPIError(Exception):
@@ -20,7 +22,7 @@ class LegifranceAPIError(Exception):
 
 
 class LegifranceService:
-    """Accès aux textes de loi Légifrance via l'API publique (sans authentification)."""
+    """Accès aux textes de loi Légifrance via l'API PISTE (OAuth 2.0)."""
 
     async def search_textes(
         self,
@@ -61,16 +63,21 @@ class LegifranceService:
         logger.debug("Légifrance search: query=%r type=%r page=%d limit=%d", query, type_texte, page, limit)
 
         try:
+            auth_headers = await piste_auth.get_headers()
+            headers = {**auth_headers, "Content-Type": "application/json"}
             async with httpx.AsyncClient(timeout=30) as http:
                 r = await http.post(
                     f"{LEGI_BASE_URL}/search",
                     json=payload,
-                    headers={"Accept": "application/json", "Content-Type": "application/json"},
+                    headers=headers,
                 )
                 logger.debug("Légifrance search response: HTTP %d for query=%r", r.status_code, query)
                 r.raise_for_status()
                 data = r.json()
 
+        except PisteAuthError as exc:
+            logger.error("Légifrance search auth error for query=%r : %s", query, exc)
+            raise LegifranceAPIError(f"Erreur d'authentification PISTE : {exc}") from exc
         except httpx.TimeoutException as exc:
             logger.error("Légifrance search timeout for query=%r : %s", query, exc)
             raise LegifranceAPIError(
@@ -107,17 +114,22 @@ class LegifranceService:
         logger.debug("Légifrance get_texte: id=%r", texte_id)
 
         try:
+            auth_headers = await piste_auth.get_headers()
+            headers = {**auth_headers, "Content-Type": "application/json"}
             async with httpx.AsyncClient(timeout=30) as http:
                 r = await http.post(
                     f"{LEGI_BASE_URL}/consult/texte",
                     json={"textId": texte_id},
-                    headers={"Accept": "application/json", "Content-Type": "application/json"},
+                    headers=headers,
                 )
                 if r.status_code == 404:
                     return None
                 r.raise_for_status()
                 return r.json()
 
+        except PisteAuthError as exc:
+            logger.error("Légifrance get_texte auth error for id=%r : %s", texte_id, exc)
+            raise LegifranceAPIError(f"Erreur d'authentification PISTE : {exc}") from exc
         except httpx.TimeoutException as exc:
             logger.error("Légifrance get_texte timeout for id=%r : %s", texte_id, exc)
             raise LegifranceAPIError(

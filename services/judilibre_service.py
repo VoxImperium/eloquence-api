@@ -1,14 +1,16 @@
 """
-services/judilibre_service.py — Service Judilibre via l'API publique (sans authentification)
-Endpoints : GET /search, GET /decision/{id}
+services/judilibre_service.py — Service Judilibre via l'API PISTE (OAuth 2.0)
+Endpoints : GET /search, GET /decision
 """
 
 import logging
 import httpx
 
+from .piste_auth import piste_auth, PisteAuthError
+
 logger = logging.getLogger(__name__)
 
-JUDILIBRE_BASE_URL = "https://api.judilibre.io/cassation/judilibre/v1"
+JUDILIBRE_BASE_URL = "https://api.aife.economie.gouv.fr/dila/judilibre/v1"
 
 
 class JudilibreAPIError(Exception):
@@ -20,7 +22,7 @@ class JudilibreAPIError(Exception):
 
 
 class JudilibreService:
-    """Accès aux décisions de justice via l'API publique Judilibre (sans authentification)."""
+    """Accès aux décisions de justice via l'API Judilibre PISTE (OAuth 2.0)."""
 
     async def search_decisions(
         self,
@@ -69,16 +71,20 @@ class JudilibreService:
         logger.debug("Judilibre search: query=%r filters=%r page=%d limit=%d", query, filters, page, limit)
 
         try:
+            headers = await piste_auth.get_headers()
             async with httpx.AsyncClient(timeout=30) as http:
                 r = await http.get(
                     f"{JUDILIBRE_BASE_URL}/search",
                     params=params,
-                    headers={"Accept": "application/json"},
+                    headers=headers,
                 )
                 logger.debug("Judilibre search response: HTTP %d for query=%r", r.status_code, query)
                 r.raise_for_status()
                 data = r.json()
 
+        except PisteAuthError as exc:
+            logger.error("Judilibre search auth error for query=%r : %s", query, exc)
+            raise JudilibreAPIError(f"Erreur d'authentification PISTE : {exc}") from exc
         except httpx.TimeoutException as exc:
             logger.error("Judilibre search timeout for query=%r : %s", query, exc)
             raise JudilibreAPIError(
@@ -115,17 +121,21 @@ class JudilibreService:
         logger.debug("Judilibre get_decision: id=%r", decision_id)
 
         try:
+            headers = await piste_auth.get_headers()
             async with httpx.AsyncClient(timeout=30) as http:
                 r = await http.get(
                     f"{JUDILIBRE_BASE_URL}/decision",
                     params={"id": decision_id, "resolve_references": "true"},
-                    headers={"Accept": "application/json"},
+                    headers=headers,
                 )
                 if r.status_code == 404:
                     return None
                 r.raise_for_status()
                 data = r.json()
 
+        except PisteAuthError as exc:
+            logger.error("Judilibre get_decision auth error for id=%r : %s", decision_id, exc)
+            raise JudilibreAPIError(f"Erreur d'authentification PISTE : {exc}") from exc
         except httpx.TimeoutException as exc:
             logger.error("Judilibre get_decision timeout for id=%r : %s", decision_id, exc)
             raise JudilibreAPIError(

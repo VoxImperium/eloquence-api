@@ -5,9 +5,7 @@ import asyncio
 import logging
 import os, json, re
 
-from services.legifrance_service import legifrance_service, LegifranceAPIError
-from services.judilibre_service import judilibre_service, JudilibreAPIError
-import services.jurisprudence_db as jurisprudence_db
+from services.openlegi_service import openlegi_service, OpenLegiError
 
 router = APIRouter(prefix="/legifrance", tags=["legifrance"])
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -46,25 +44,12 @@ class RechercheRequest(BaseModel):
     type: str = "jurisprudence"  # jurisprudence, code, loi
 
 async def search_judilibre(query: str, operator: str = "AND") -> list:
-    """
-    Recherche dans la jurisprudence.
-    Utilise la base de données PostgreSQL locale en priorité (rapide, sans auth).
-    Bascule vers l'API Judilibre PISTE uniquement si la base locale est vide.
-    """
-    # Essai base locale
-    if jurisprudence_db.get_pool() is not None:
-        results = await jurisprudence_db.search_decisions(query, limit=5)
-        if results:
-            logger.debug("Judilibre local : %d résultats pour %r", len(results), query)
-            return results
-        logger.debug("Judilibre local : aucun résultat pour %r — fallback API", query)
-
-    # Fallback vers l'API PISTE
-    return await judilibre_service.search_decisions(query, page=1, limit=5)
+    """Recherche dans la jurisprudence via OpenLegi MCP."""
+    return await openlegi_service.search_jurisprudence(query, limit=5)
 
 async def search_legifrance_text(query: str) -> list:
-    """Recherche dans les textes de loi via l'API Légifrance PISTE (OAuth 2.0)."""
-    return await legifrance_service.search_textes(query, page=1, limit=5, fond="LODA")
+    """Recherche dans les textes de loi via OpenLegi MCP."""
+    return await openlegi_service.search_textes(query, limit=5)
 
 async def get_article_code(code: str, article: str) -> dict:
     """Récupère un article de code via l'API"""
@@ -291,13 +276,13 @@ JSON :
 
 @router.get("/health/db")
 async def health_db():
-    """Vérifie la connexion à la base de données PostgreSQL locale (jurisprudence)."""
+    """Vérifie la connectivité au service OpenLegi MCP."""
     try:
-        result = await jurisprudence_db.healthcheck()
-        return result
+        await openlegi_service.search_jurisprudence("test", limit=1)
+        return {"status": "ok", "service": "openlegi"}
     except Exception as e:
-        logger.error("Erreur health DB : %s", e)
-        return {"status": "error", "message": str(e), "decisions_count": 0}
+        logger.error("Erreur health OpenLegi : %s", e)
+        return {"status": "error", "message": str(e), "service": "openlegi"}
 
 @router.post("/cas-pratique")
 async def resoudre_cas_pratique(req: CasPratiqueRequest):
@@ -332,18 +317,18 @@ async def resoudre_cas_pratique(req: CasPratiqueRequest):
         try:
             results = await search_judilibre(terme)
             jurisprudence.extend(results[:2])
-        except JudilibreAPIError as exc:
-            logger.warning("Judilibre indisponible pour terme=%r : %s", terme, exc)
+        except OpenLegiError as exc:
+            logger.warning("OpenLegi indisponible pour terme=%r : %s", terme, exc)
             api_errors.append({
-                "service": "judilibre",
+                "service": "openlegi",
                 "query": terme,
                 "error": str(exc),
                 "status_code": exc.status_code,
             })
         except Exception as exc:
-            logger.warning("Erreur inattendue Judilibre pour terme=%r : %s", terme, exc)
+            logger.warning("Erreur inattendue OpenLegi pour terme=%r : %s", terme, exc)
             api_errors.append({
-                "service": "judilibre",
+                "service": "openlegi",
                 "query": terme,
                 "error": str(exc),
                 "status_code": None,
@@ -377,8 +362,8 @@ async def rechercher(req: RechercheRequest):
         else:
             results = await search_legifrance_text(req.query)
             return {"results": results, "type": req.type, "query": req.query}
-    except (JudilibreAPIError, LegifranceAPIError) as exc:
-        logger.error("Erreur API PISTE lors de la recherche type=%r query=%r : %s", req.type, req.query, exc)
+    except OpenLegiError as exc:
+        logger.error("Erreur OpenLegi lors de la recherche type=%r query=%r : %s", req.type, req.query, exc)
         raise HTTPException(
             status_code=502,
             detail={"error": str(exc), "service": req.type, "query": req.query},

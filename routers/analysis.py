@@ -6,14 +6,19 @@ from supabase import create_client
 from services.transcription import transcribe_audio, detect_filler_words
 from services.audio_analysis import analyze_audio
 from services.llm import generate_feedback
+import asyncio
+import logging
 import os
 
 router = APIRouter(prefix="/analyze", tags=["analysis"])
+logger = logging.getLogger(__name__)
 
-supabase = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")
-)
+supabase = None
+if os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_KEY"):
+    try:
+        supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+    except Exception as e:
+        logger.warning("Supabase initialization failed: %s", e)
 
 
 @router.post("/")
@@ -36,7 +41,8 @@ async def analyze_speech(
 
     # ── Étape 2 : Métriques audio Librosa ───────────────────
     total_words   = len(transcript_data["text"].split())
-    audio_metrics = analyze_audio(audio_bytes, total_words)
+    loop = asyncio.get_running_loop()
+    audio_metrics = await loop.run_in_executor(None, analyze_audio, audio_bytes, total_words)
 
     # ── Étape 3 : Mots parasites ────────────────────────────
     filler_data = detect_filler_words(transcript_data["text"])
@@ -51,19 +57,23 @@ async def analyze_speech(
 
     # ── Étape 5 : Sauvegarde Supabase ───────────────────────
     session_id = None
-    if user_id:
+    if user_id and supabase:
         try:
-            row = supabase.table("analysis_sessions").insert({
-                "user_id":    user_id,
-                "context":    context,
-                "transcript": transcript_data["text"],
-                "duration_s": audio_metrics["duration_seconds"],
-                "metrics":    audio_metrics,
-                "feedback":   llm_feedback,
-            }).execute()
+            loop = asyncio.get_running_loop()
+            row = await loop.run_in_executor(
+                None,
+                lambda: supabase.table("analysis_sessions").insert({
+                    "user_id":    user_id,
+                    "context":    context,
+                    "transcript": transcript_data["text"],
+                    "duration_s": audio_metrics["duration_seconds"],
+                    "metrics":    audio_metrics,
+                    "feedback":   llm_feedback,
+                }).execute()
+            )
             session_id = row.data[0]["id"]
         except Exception as e:
-            print(f"Erreur sauvegarde: {e}")
+            logger.warning("Erreur sauvegarde: %s", e)
 
     return {
         "session_id":    session_id,

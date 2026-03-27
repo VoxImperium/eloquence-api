@@ -4,11 +4,20 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from groq import Groq
+import asyncio
 import os
 import json
+import logging
 
 router = APIRouter(prefix="/simulate", tags=["simulation"])
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+logger = logging.getLogger(__name__)
+
+
+async def call_groq_async(client, **kwargs):
+    """Wrapper pour appels Groq synchrones dans contexte async."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: client.chat.completions.create(**kwargs))
 
 # ── Personas IA par scénario ─────────────────────────────────────────
 PERSONAS = {
@@ -99,7 +108,8 @@ async def simulate_message(req: SimulationMessage):
         system += f"\n\nSujet de la session : {req.topic}"
 
     try:
-        response = client.chat.completions.create(
+        response = await call_groq_async(
+            client,
             model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": system},
@@ -152,7 +162,8 @@ Génère un debrief JSON de la performance de l'utilisateur :
 }}"""
 
     try:
-        response = client.chat.completions.create(
+        response = await call_groq_async(
+            client,
             model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": "Tu es un coach expert en éloquence. Réponds UNIQUEMENT en JSON valide sans backticks."},
@@ -166,8 +177,14 @@ Génère un debrief JSON de la performance de l'utilisateur :
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
-        return json.loads(raw)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            logger.error("JSON parsing failed: %s", e)
+            raise HTTPException(500, f"Invalid JSON response: {str(e)}")
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Erreur debrief: {str(e)}")
 

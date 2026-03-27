@@ -50,7 +50,7 @@ class JudilibreService:
         params: dict = {
             "query": query,
             "operator": "AND",
-            "field": ["summary", "themes"],
+            "field": "all",
             "resolve_references": "true",
             "page_size": limit,
             "page_index": page_index,

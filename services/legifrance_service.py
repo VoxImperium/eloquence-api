@@ -10,7 +10,7 @@ from .piste_auth import piste_auth, PisteAuthError
 
 logger = logging.getLogger(__name__)
 
-LEGI_BASE_URL = "https://api.piste.gouv.fr/dila/legifrance/lf-engine-app/v1"
+LEGI_BASE_URL = "https://api.piste.gouv.fr/dila/legifrance/lf-engine-app"
 
 
 class LegifranceAPIError(Exception):
@@ -30,6 +30,7 @@ class LegifranceService:
         type_texte: str | None = None,
         page: int = 1,
         limit: int = 20,
+        fond: str = "JORF",
     ) -> list[dict]:
         """
         Recherche de textes de loi via l'API publique Légifrance.
@@ -39,6 +40,7 @@ class LegifranceService:
             type_texte: Filtre optionnel (LOI, DECRET, ARRETE, CODE, etc.).
             page: Numéro de page (commence à 1).
             limit: Nombre de résultats par page.
+            fond: Fonds documentaire ciblé (ex: "JORF", "LODA", "JURI").
 
         Returns:
             Liste de textes normalisés.
@@ -52,7 +54,9 @@ class LegifranceService:
                 "pageSize": limit,
                 "sort": "PERTINENCE",
                 "typePagination": "DEFAUT",
-            }
+                "operateur": "ET",
+            },
+            "fond": fond,
         }
 
         if type_texte:

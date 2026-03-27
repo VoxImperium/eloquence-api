@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from groq import Groq
+import logging
 import os, json, re
 
 from services.legifrance_service import legifrance_service
@@ -8,6 +9,7 @@ from services.judilibre_service import judilibre_service
 
 router = APIRouter(prefix="/legifrance", tags=["legifrance"])
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+logger = logging.getLogger(__name__)
 
 THEMIS_SYSTEM = """Tu es "L'Éloquence de Thémis", IA experte en droit français et rhétorique classique, Avocat à la Cour et membre de l'Académie française.
 
@@ -257,6 +259,24 @@ JSON :
         "jurisprudence":    jurisprudence,
         "arguments":        arguments,
     }
+
+@router.get("/health/piste")
+async def health_piste():
+    """Vérifie l'authentification PISTE et retourne les infos de diagnostic."""
+    try:
+        client_id = os.getenv("PISTE_CLIENT_ID")
+        client_secret = os.getenv("PISTE_CLIENT_SECRET")
+
+        return {
+            "status": "ok" if (client_id and client_secret) else "error",
+            "client_id_set": bool(client_id),
+            "client_secret_set": bool(client_secret),
+            "oauth_url": os.getenv("PISTE_OAUTH_URL", "https://piste.gouv.fr/api/oauth/token"),
+            "message": "Authentification PISTE configurée" if (client_id and client_secret) else "Variables PISTE manquantes",
+        }
+    except Exception as e:
+        logger.error("Erreur health PISTE : %s", e)
+        return {"status": "error", "message": str(e)}
 
 @router.post("/cas-pratique")
 async def resoudre_cas_pratique(req: CasPratiqueRequest):

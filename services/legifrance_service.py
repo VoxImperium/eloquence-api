@@ -10,7 +10,7 @@ from .piste_auth import piste_auth, PisteAuthError
 
 logger = logging.getLogger(__name__)
 
-LEGI_BASE_URL = "https://api.aife.economie.gouv.fr/dila/legifrance/lf-engine-app"
+LEGI_BASE_URL = "https://api.piste.gouv.fr/dila/legifrance/lf-engine-app/v1"
 
 
 class LegifranceAPIError(Exception):

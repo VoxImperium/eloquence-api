@@ -10,7 +10,7 @@ from .piste_auth import piste_auth, PisteAuthError
 
 logger = logging.getLogger(__name__)
 
-JUDILIBRE_BASE_URL = "https://api.aife.economie.gouv.fr/dila/judilibre/v1"
+JUDILIBRE_BASE_URL = "https://api.piste.gouv.fr/cassation/judilibre/v1"
 
 
 class JudilibreAPIError(Exception):

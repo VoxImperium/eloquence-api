@@ -64,7 +64,7 @@ async def search_judilibre(query: str, operator: str = "AND") -> list:
 
 async def search_legifrance_text(query: str) -> list:
     """Recherche dans les textes de loi via l'API Légifrance PISTE (OAuth 2.0)."""
-    return await legifrance_service.search_textes(query, page=1, limit=5)
+    return await legifrance_service.search_textes(query, page=1, limit=5, fond="LODA")
 
 async def get_article_code(code: str, article: str) -> dict:
     """Récupère un article de code via l'API"""

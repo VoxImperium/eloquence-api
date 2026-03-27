@@ -289,25 +289,6 @@ JSON :
         "arguments":        arguments,
     }
 
-@router.get("/health/piste")
-async def health_piste():
-    """Vérifie l'authentification PISTE et retourne les infos de diagnostic."""
-    try:
-        client_id = os.getenv("PISTE_CLIENT_ID")
-        client_secret = os.getenv("PISTE_CLIENT_SECRET")
-
-        return {
-            "status": "ok" if (client_id and client_secret) else "error",
-            "client_id_set": bool(client_id),
-            "client_secret_set": bool(client_secret),
-            "oauth_url": os.getenv("PISTE_OAUTH_URL", "https://piste.gouv.fr/api/oauth/token"),
-            "message": "Authentification PISTE configurée" if (client_id and client_secret) else "Variables PISTE manquantes",
-        }
-    except Exception as e:
-        logger.error("Erreur health PISTE : %s", e)
-        return {"status": "error", "message": str(e)}
-
-
 @router.get("/health/db")
 async def health_db():
     """Vérifie la connexion à la base de données PostgreSQL locale (jurisprudence)."""

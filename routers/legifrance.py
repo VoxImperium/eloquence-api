@@ -7,6 +7,7 @@ import os, json, re
 
 from services.legifrance_service import legifrance_service, LegifranceAPIError
 from services.judilibre_service import judilibre_service, JudilibreAPIError
+import services.jurisprudence_db as jurisprudence_db
 
 router = APIRouter(prefix="/legifrance", tags=["legifrance"])
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -45,7 +46,20 @@ class RechercheRequest(BaseModel):
     type: str = "jurisprudence"  # jurisprudence, code, loi
 
 async def search_judilibre(query: str, operator: str = "AND") -> list:
-    """Recherche dans la jurisprudence via l'API Judilibre PISTE (OAuth 2.0)."""
+    """
+    Recherche dans la jurisprudence.
+    Utilise la base de données PostgreSQL locale en priorité (rapide, sans auth).
+    Bascule vers l'API Judilibre PISTE uniquement si la base locale est vide.
+    """
+    # Essai base locale
+    if jurisprudence_db.get_pool() is not None:
+        results = await jurisprudence_db.search_decisions(query, limit=5)
+        if results:
+            logger.debug("Judilibre local : %d résultats pour %r", len(results), query)
+            return results
+        logger.debug("Judilibre local : aucun résultat pour %r — fallback API", query)
+
+    # Fallback vers l'API PISTE
     return await judilibre_service.search_decisions(query, page=1, limit=5)
 
 async def search_legifrance_text(query: str) -> list:
@@ -292,6 +306,17 @@ async def health_piste():
     except Exception as e:
         logger.error("Erreur health PISTE : %s", e)
         return {"status": "error", "message": str(e)}
+
+
+@router.get("/health/db")
+async def health_db():
+    """Vérifie la connexion à la base de données PostgreSQL locale (jurisprudence)."""
+    try:
+        result = await jurisprudence_db.healthcheck()
+        return result
+    except Exception as e:
+        logger.error("Erreur health DB : %s", e)
+        return {"status": "error", "message": str(e), "decisions_count": 0}
 
 @router.post("/cas-pratique")
 async def resoudre_cas_pratique(req: CasPratiqueRequest):

@@ -49,7 +49,7 @@ def format_jurisprudence(j: dict) -> str:
 
     Exemple : "Cour de cassation, criminelle, Chambre criminelle, 14 avril 2015, 14-83.462"
     """
-    juridiction = j.get("juridiction", "") or "Cour de cassation"
+    juridiction = j.get("juridiction", "") or ""
     chambre_raw = j.get("chambre", "") or ""
     numero = j.get("numero", "") or ""
     date_raw = j.get("date", "") or ""
@@ -74,7 +74,24 @@ def format_jurisprudence(j: dict) -> str:
         except Exception:
             pass
 
+    # Fallback : si la juridiction est vide, utiliser "Cour de cassation" par défaut
+    if not juridiction:
+        logger.debug(
+            "format_jurisprudence: juridiction manquante pour id=%r, utilisation du fallback",
+            j.get("id", ""),
+        )
+        juridiction = "Cour de cassation"
+
     segments = [s for s in [juridiction, chambre_formatted, date_formatted, numero] if s]
+
+    if not segments:
+        logger.warning(
+            "format_jurisprudence: aucun champ disponible pour id=%r — champs présents: %s",
+            j.get("id", ""),
+            [k for k, v in j.items() if v],
+        )
+        return ""
+
     return ", ".join(segments)
 
 
@@ -160,7 +177,23 @@ async def search_judilibre(
     results = await openlegi_service.search_jurisprudence(query, limit=5)
     enriched = []
     for j in results:
-        j["formatage_officiel"] = format_jurisprudence(j) or (f"Jurisprudence n°{j['numero']}" if j.get("numero") else "Jurisprudence (format indisponible)")
+        logger.debug(
+            "search_judilibre: jurisprudence normalisée id=%r — juridiction=%r chambre=%r date=%r numero=%r",
+            j.get("id", ""),
+            j.get("juridiction", ""),
+            j.get("chambre", ""),
+            j.get("date", ""),
+            j.get("numero", ""),
+        )
+        formatage = format_jurisprudence(j) or (
+            f"Jurisprudence n°{j['numero']}" if j.get("numero") else "Jurisprudence (format indisponible)"
+        )
+        logger.debug(
+            "search_judilibre: formatage_officiel id=%r → %r",
+            j.get("id", ""),
+            formatage,
+        )
+        j["formatage_officiel"] = formatage
         j["resume"] = clean_asterisks((j.get("resume") or "")[:200])
         j["apport_cas_pratique"] = await analyser_apport_jurisprudence(faits, qualification, j)
         enriched.append(j)

@@ -142,15 +142,66 @@ class OpenLegiService:
     @staticmethod
     def _normalize_jurisprudence(item: dict) -> dict:
         """Transforme une entrée brute en format uniforme (jurisprudence)."""
+        logger.debug(
+            "OpenLegi raw item keys: %s",
+            list(item.keys()) if isinstance(item, dict) else type(item).__name__,
+        )
+
+        # Date — plusieurs noms possibles selon la version de l'API
+        date = (
+            item.get("date")
+            or item.get("decision_date")
+            or item.get("dateDecision")
+            or item.get("date_decision")
+            or item.get("dateCreation")
+            or ""
+        )
+
+        # Chambre — plusieurs noms possibles
+        chambre = (
+            item.get("chambre")
+            or item.get("chamber")
+            or item.get("formation")
+            or item.get("chamber_name")
+            or item.get("type_affaire")
+            or ""
+        )
+
+        # Numéro de pourvoi — plusieurs noms possibles
+        numero = (
+            item.get("numero")
+            or item.get("number")
+            or item.get("pourvoi")
+            or item.get("reference")
+            or item.get("num_decision")
+            or item.get("id_decision")
+            or ""
+        )
+
+        # Juridiction — plusieurs noms possibles ; fallback depuis type_decision
+        juridiction = (
+            item.get("juridiction")
+            or item.get("jurisdiction")
+            or item.get("court")
+            or item.get("court_name")
+            or item.get("tribunal")
+            or ""
+        )
+        if not juridiction:
+            # Certains résultats encodent la juridiction dans le type de décision
+            type_decision = item.get("type_decision") or item.get("typeDecision") or ""
+            if type_decision:
+                juridiction = type_decision
+
         return {
             "id": item.get("id", ""),
-            "date": item.get("date", item.get("decision_date", "")),
-            "chambre": item.get("chambre", item.get("chamber", "")),
+            "date": date,
+            "chambre": chambre,
             "solution": item.get("solution", ""),
             "resume": str(item.get("resume", item.get("summary", "")))[:500],
             "themes": item.get("themes", []),
-            "numero": item.get("numero", item.get("number", "")),
-            "juridiction": item.get("juridiction", item.get("jurisdiction", "")),
+            "numero": numero,
+            "juridiction": juridiction,
             "source": "openlegi",
         }
 

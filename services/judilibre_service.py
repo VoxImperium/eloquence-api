@@ -12,6 +12,14 @@ logger = logging.getLogger(__name__)
 JUDILIBRE_BASE_URL = "https://api.piste.gouv.fr/cassation/judilibre/v1"
 
 
+class JudilibreAPIError(Exception):
+    """Erreur levée lors d'un échec de l'API Judilibre PISTE."""
+
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class JudilibreService:
     """Accès aux décisions de justice via l'API Judilibre PISTE (OAuth 2.0)."""
 
@@ -35,7 +43,6 @@ class JudilibreService:
         Returns:
             Liste de décisions normalisées.
         """
-        headers = await piste_auth.get_headers()
         # Judilibre attend une page à base 0
         page_index = max(0, page - 1)
 
@@ -60,8 +67,11 @@ class JudilibreService:
             if filters.get("type"):
                 params["type"] = filters["type"]
 
+        logger.debug("Judilibre search: query=%r filters=%r page=%d limit=%d", query, filters, page, limit)
+
         try:
-            async with httpx.AsyncClient(timeout=20) as http:
+            headers = await piste_auth.get_headers()
+            async with httpx.AsyncClient(timeout=30) as http:
                 r = await http.get(
                     f"{JUDILIBRE_BASE_URL}/search",
                     params=params,
@@ -69,6 +79,7 @@ class JudilibreService:
                 )
                 if r.status_code == 401:
                     # Token expiré — forcer le refresh et réessayer
+                    logger.warning("Judilibre search: token expiré (401), tentative de refresh")
                     await piste_auth.refresh_token()
                     headers = await piste_auth.get_headers()
                     r = await http.get(
@@ -76,15 +87,29 @@ class JudilibreService:
                         params=params,
                         headers=headers,
                     )
+                logger.debug("Judilibre search response: HTTP %d for query=%r", r.status_code, query)
                 r.raise_for_status()
                 data = r.json()
 
+        except httpx.TimeoutException as exc:
+            logger.error("Judilibre search timeout for query=%r : %s", query, exc)
+            raise JudilibreAPIError(
+                f"Timeout lors de la recherche Judilibre (query={query!r})"
+            ) from exc
         except httpx.HTTPStatusError as exc:
-            logger.error("Judilibre search HTTP %s : %s", exc.response.status_code, exc.response.text[:300])
-            return []
+            logger.error(
+                "Judilibre search HTTP %s for query=%r : %s",
+                exc.response.status_code, query, exc.response.text[:300],
+            )
+            raise JudilibreAPIError(
+                f"Erreur HTTP {exc.response.status_code} de l'API Judilibre",
+                status_code=exc.response.status_code,
+            ) from exc
         except Exception as exc:
-            logger.error("Judilibre search error: %s", exc)
-            return []
+            logger.error("Judilibre search error for query=%r : %s", query, exc)
+            raise JudilibreAPIError(
+                f"Erreur lors de la recherche Judilibre : {exc}"
+            ) from exc
 
         results = data.get("results", [])
         return [self._normalize(res) for res in results]
@@ -99,16 +124,18 @@ class JudilibreService:
         Returns:
             Dictionnaire avec les données de la décision, ou None si non trouvée.
         """
-        headers = await piste_auth.get_headers()
+        logger.debug("Judilibre get_decision: id=%r", decision_id)
 
         try:
-            async with httpx.AsyncClient(timeout=20) as http:
+            headers = await piste_auth.get_headers()
+            async with httpx.AsyncClient(timeout=30) as http:
                 r = await http.get(
                     f"{JUDILIBRE_BASE_URL}/decision",
                     params={"id": decision_id, "resolve_references": "true"},
                     headers=headers,
                 )
                 if r.status_code == 401:
+                    logger.warning("Judilibre get_decision: token expiré (401), tentative de refresh")
                     await piste_auth.refresh_token()
                     headers = await piste_auth.get_headers()
                     r = await http.get(
@@ -121,12 +148,25 @@ class JudilibreService:
                 r.raise_for_status()
                 data = r.json()
 
+        except httpx.TimeoutException as exc:
+            logger.error("Judilibre get_decision timeout for id=%r : %s", decision_id, exc)
+            raise JudilibreAPIError(
+                f"Timeout lors de la récupération de la décision Judilibre (id={decision_id!r})"
+            ) from exc
         except httpx.HTTPStatusError as exc:
-            logger.error("Judilibre get decision HTTP %s : %s", exc.response.status_code, exc.response.text[:300])
-            return None
+            logger.error(
+                "Judilibre get_decision HTTP %s for id=%r : %s",
+                exc.response.status_code, decision_id, exc.response.text[:300],
+            )
+            raise JudilibreAPIError(
+                f"Erreur HTTP {exc.response.status_code} de l'API Judilibre",
+                status_code=exc.response.status_code,
+            ) from exc
         except Exception as exc:
-            logger.error("Judilibre get decision error: %s", exc)
-            return None
+            logger.error("Judilibre get_decision error for id=%r : %s", decision_id, exc)
+            raise JudilibreAPIError(
+                f"Erreur lors de la récupération de la décision Judilibre : {exc}"
+            ) from exc
 
         results = data.get("results", [])
         if not results:

@@ -12,6 +12,14 @@ logger = logging.getLogger(__name__)
 LEGI_BASE_URL = "https://api.piste.gouv.fr/dila/legifrance/lf-engine-app"
 
 
+class LegifranceAPIError(Exception):
+    """Erreur levée lors d'un échec de l'API Légifrance PISTE."""
+
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class LegifranceService:
     """Accès aux textes de loi Légifrance via l'API PISTE (OAuth 2.0)."""
 
@@ -34,8 +42,6 @@ class LegifranceService:
         Returns:
             Liste de textes normalisés.
         """
-        headers = await piste_auth.get_headers()
-
         payload: dict = {
             "recherche": {
                 "champs": [
@@ -53,8 +59,11 @@ class LegifranceService:
                 {"facette": "NATURE", "valeur": type_texte.upper()}
             ]
 
+        logger.debug("Légifrance search: query=%r type=%r page=%d limit=%d", query, type_texte, page, limit)
+
         try:
-            async with httpx.AsyncClient(timeout=20) as http:
+            headers = await piste_auth.get_headers()
+            async with httpx.AsyncClient(timeout=30) as http:
                 r = await http.post(
                     f"{LEGI_BASE_URL}/search",
                     json=payload,
@@ -62,6 +71,7 @@ class LegifranceService:
                 )
                 if r.status_code == 401:
                     # Token expiré — forcer le refresh et réessayer
+                    logger.warning("Légifrance search: token expiré (401), tentative de refresh")
                     await piste_auth.refresh_token()
                     headers = await piste_auth.get_headers()
                     r = await http.post(
@@ -69,15 +79,29 @@ class LegifranceService:
                         json=payload,
                         headers=headers,
                     )
+                logger.debug("Légifrance search response: HTTP %d for query=%r", r.status_code, query)
                 r.raise_for_status()
                 data = r.json()
 
+        except httpx.TimeoutException as exc:
+            logger.error("Légifrance search timeout for query=%r : %s", query, exc)
+            raise LegifranceAPIError(
+                f"Timeout lors de la recherche Légifrance (query={query!r})"
+            ) from exc
         except httpx.HTTPStatusError as exc:
-            logger.error("Légifrance search HTTP %s : %s", exc.response.status_code, exc.response.text[:300])
-            return []
+            logger.error(
+                "Légifrance search HTTP %s for query=%r : %s",
+                exc.response.status_code, query, exc.response.text[:300],
+            )
+            raise LegifranceAPIError(
+                f"Erreur HTTP {exc.response.status_code} de l'API Légifrance",
+                status_code=exc.response.status_code,
+            ) from exc
         except Exception as exc:
-            logger.error("Légifrance search error: %s", exc)
-            return []
+            logger.error("Légifrance search error for query=%r : %s", query, exc)
+            raise LegifranceAPIError(
+                f"Erreur lors de la recherche Légifrance : {exc}"
+            ) from exc
 
         results = data.get("results", [])
         return [self._normalize(item) for item in results[:limit]]
@@ -92,16 +116,18 @@ class LegifranceService:
         Returns:
             Dictionnaire avec les données du texte, ou None si non trouvé.
         """
-        headers = await piste_auth.get_headers()
+        logger.debug("Légifrance get_texte: id=%r", texte_id)
 
         try:
-            async with httpx.AsyncClient(timeout=20) as http:
+            headers = await piste_auth.get_headers()
+            async with httpx.AsyncClient(timeout=30) as http:
                 r = await http.post(
                     f"{LEGI_BASE_URL}/consult/texte",
                     json={"textId": texte_id},
                     headers=headers,
                 )
                 if r.status_code == 401:
+                    logger.warning("Légifrance get_texte: token expiré (401), tentative de refresh")
                     await piste_auth.refresh_token()
                     headers = await piste_auth.get_headers()
                     r = await http.post(
@@ -114,12 +140,25 @@ class LegifranceService:
                 r.raise_for_status()
                 return r.json()
 
+        except httpx.TimeoutException as exc:
+            logger.error("Légifrance get_texte timeout for id=%r : %s", texte_id, exc)
+            raise LegifranceAPIError(
+                f"Timeout lors de la récupération du texte Légifrance (id={texte_id!r})"
+            ) from exc
         except httpx.HTTPStatusError as exc:
-            logger.error("Légifrance get texte HTTP %s : %s", exc.response.status_code, exc.response.text[:300])
-            return None
+            logger.error(
+                "Légifrance get_texte HTTP %s for id=%r : %s",
+                exc.response.status_code, texte_id, exc.response.text[:300],
+            )
+            raise LegifranceAPIError(
+                f"Erreur HTTP {exc.response.status_code} de l'API Légifrance",
+                status_code=exc.response.status_code,
+            ) from exc
         except Exception as exc:
-            logger.error("Légifrance get texte error: %s", exc)
-            return None
+            logger.error("Légifrance get_texte error for id=%r : %s", texte_id, exc)
+            raise LegifranceAPIError(
+                f"Erreur lors de la récupération du texte Légifrance : {exc}"
+            ) from exc
 
     @staticmethod
     def _normalize(item: dict) -> dict:

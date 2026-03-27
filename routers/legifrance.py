@@ -5,8 +5,8 @@ import asyncio
 import logging
 import os, json, re
 
-from services.legifrance_service import legifrance_service
-from services.judilibre_service import judilibre_service
+from services.legifrance_service import legifrance_service, LegifranceAPIError
+from services.judilibre_service import judilibre_service, JudilibreAPIError
 
 router = APIRouter(prefix="/legifrance", tags=["legifrance"])
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -297,6 +297,8 @@ async def health_piste():
 async def resoudre_cas_pratique(req: CasPratiqueRequest):
     """Résout un cas pratique et génère une plaidoirie complète"""
 
+    api_errors: list[dict] = []
+
     # Étape 1 — Analyse juridique par Groq
     analyse = await identifier_articles_pertinents(req.faits, req.domaine)
 
@@ -318,11 +320,28 @@ async def resoudre_cas_pratique(req: CasPratiqueRequest):
                 "favorable":  art_info.get("favorable", True),
             })
 
-    # Étape 3 — Rechercher la jurisprudence
+    # Étape 3 — Rechercher la jurisprudence (dégradation gracieuse si API indisponible)
     jurisprudence = []
     for terme in analyse.get("jurisprudence_rechercher", [])[:2]:
-        results = await search_judilibre(terme)
-        jurisprudence.extend(results[:2])
+        try:
+            results = await search_judilibre(terme)
+            jurisprudence.extend(results[:2])
+        except JudilibreAPIError as exc:
+            logger.warning("Judilibre indisponible pour terme=%r : %s", terme, exc)
+            api_errors.append({
+                "service": "judilibre",
+                "query": terme,
+                "error": str(exc),
+                "status_code": exc.status_code,
+            })
+        except Exception as exc:
+            logger.warning("Erreur inattendue Judilibre pour terme=%r : %s", terme, exc)
+            api_errors.append({
+                "service": "judilibre",
+                "query": terme,
+                "error": str(exc),
+                "status_code": None,
+            })
 
     # Étape 4 — Générer la plaidoirie Thémis
     plaidoirie = await generer_plaidoirie_themis(
@@ -333,22 +352,34 @@ async def resoudre_cas_pratique(req: CasPratiqueRequest):
         jurisprudence=jurisprudence[:4],
     )
 
-    return {
+    response: dict = {
         **plaidoirie,
         "analyse_juridique": analyse,
         "nb_articles":       len(articles),
         "nb_jurisprudence":  len(jurisprudence),
+        "api_errors":        api_errors,
     }
+    return response
 
 @router.post("/recherche")
 async def rechercher(req: RechercheRequest):
     """Recherche dans Légifrance"""
-    if req.type == "jurisprudence":
-        results = await search_judilibre(req.query)
-        return {"results": results, "type": "jurisprudence", "query": req.query}
-    else:
-        results = await search_legifrance_text(req.query)
-        return {"results": results, "type": req.type, "query": req.query}
+    try:
+        if req.type == "jurisprudence":
+            results = await search_judilibre(req.query)
+            return {"results": results, "type": "jurisprudence", "query": req.query}
+        else:
+            results = await search_legifrance_text(req.query)
+            return {"results": results, "type": req.type, "query": req.query}
+    except (JudilibreAPIError, LegifranceAPIError) as exc:
+        logger.error("Erreur API PISTE lors de la recherche type=%r query=%r : %s", req.type, req.query, exc)
+        raise HTTPException(
+            status_code=502,
+            detail={"error": str(exc), "service": req.type, "query": req.query},
+        ) from exc
+    except Exception as exc:
+        logger.error("Erreur inattendue lors de la recherche type=%r query=%r : %s", req.type, req.query, exc)
+        raise HTTPException(status_code=502, detail={"error": str(exc), "service": req.type, "query": req.query}) from exc
 
 @router.post("/extract-pdf")
 async def extract_pdf(file: UploadFile = File(...)):

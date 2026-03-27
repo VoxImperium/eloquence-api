@@ -2,7 +2,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 from groq import Groq
 from services.transcription import transcribe_audio
-import os, json, re
+import asyncio, os, json, re
 
 router = APIRouter(prefix="/speech", tags=["speech"])
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -52,12 +52,16 @@ def parse_json_safe(raw: str) -> dict:
             pass
     return {}
 
-def groq(messages: list, max_tokens: int = 3000, temperature: float = 0.3) -> str:
-    r = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=messages,
-        max_tokens=max_tokens,
-        temperature=temperature,
+async def groq_async(messages: list, max_tokens: int = 3000, temperature: float = 0.3) -> str:
+    loop = asyncio.get_running_loop()
+    r = await loop.run_in_executor(
+        None,
+        lambda: client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
     )
     return r.choices[0].message.content.strip()
 
@@ -80,7 +84,7 @@ async def _full_analysis(text: str, context: str) -> dict:
     min_ann     = max(4, word_count // 100)
 
     # ── APPEL 1 : Analyse rhétorique experte ────────────────────────
-    raw1 = groq([
+    raw1 = await groq_async([
         {"role": "system", "content": ANALYSIS_SYSTEM},
         {"role": "user",   "content": f"""Analyse rhétorique experte et sans concession de ce discours ({word_count} mots, contexte: {context}).
 
@@ -147,7 +151,7 @@ OBLIGATOIRE: points_forts = 3 strings. faiblesses = 3 strings. annotations = min
     part3_text = " ".join(words[2*third:])
     target     = max(word_count // 3, 150)
 
-    raw2a = groq([
+    raw2a = await groq_async([
         {"role": "system", "content": THEMIS_SYSTEM},
         {"role": "user",   "content": f"""Contexte : {context}. Partie 1 du discours ({target} mots cible).
 
@@ -168,7 +172,7 @@ JSON :
     part_a = parse_json_safe(raw2a)
 
     # ── APPEL 2b : Thémis — Confirmation ───────────────────────────
-    raw2b = groq([
+    raw2b = await groq_async([
         {"role": "system", "content": THEMIS_SYSTEM},
         {"role": "user",   "content": f"""Contexte : {context}. Partie centrale du discours.
 
@@ -189,7 +193,7 @@ JSON :
     part_b = parse_json_safe(raw2b)
 
     # ── APPEL 2c : Thémis — Réfutation + Péroraison ────────────────
-    raw2c = groq([
+    raw2c = await groq_async([
         {"role": "system", "content": THEMIS_SYSTEM},
         {"role": "user",   "content": f"""Contexte : {context}. Conclusion du discours.
 
@@ -222,7 +226,7 @@ JSON :
     final_words = len(tirade_complete.split())
 
     # ── APPEL 3 : Note de l'Expert ──────────────────────────────────
-    raw3 = groq([
+    raw3 = await groq_async([
         {"role": "system", "content": THEMIS_SYSTEM},
         {"role": "user",   "content": f"""En tant que Thémis, rédige une note d expert sur cette transformation oratoire.
 Discours original : {word_count} mots → Tirade : {final_words} mots.

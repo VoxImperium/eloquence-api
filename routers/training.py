@@ -1,6 +1,8 @@
 # api/routers/training.py
 # Mode entraînement — dialogue socratique sur 500 sujets
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from groq import Groq
@@ -67,14 +69,18 @@ en posant des questions pertinentes, en pointant les contradictions, en exploran
 les implications de ses arguments."""
 
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": system},
-                *history
-            ],
-            max_tokens=250,
-            temperature=0.7,
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": system},
+                    *history
+                ],
+                max_tokens=250,
+                temperature=0.7,
+            )
         )
         return {"response": response.choices[0].message.content.strip()}
     except Exception as e:
@@ -109,14 +115,18 @@ Génère un bilan JSON de la qualité argumentative :
 }}"""
 
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "Coach en éloquence et philosophie. JSON uniquement, sans backticks."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=800,
-            temperature=0.3,
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": "Coach en éloquence et philosophie. JSON uniquement, sans backticks."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=800,
+                temperature=0.3,
+            )
         )
         raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):

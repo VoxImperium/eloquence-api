@@ -1,6 +1,7 @@
 # api/services/llm.py
 # Feedback coach éloquence via Groq (Llama 3.3 70B) — 100% gratuit
 
+import asyncio
 import json
 import os
 from groq import Groq
@@ -73,20 +74,24 @@ Génère une analyse JSON avec exactement cette structure :
 }}"""
 
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Tu es un coach expert en éloquence et prise de parole publique. Tu analyses des discours en français. Tu réponds UNIQUEMENT en JSON valide, sans texte avant ni après, sans backticks, sans markdown."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            max_tokens=1024,
-            temperature=0.3,
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Tu es un coach expert en éloquence et prise de parole publique. Tu analyses des discours en français. Tu réponds UNIQUEMENT en JSON valide, sans texte avant ni après, sans backticks, sans markdown."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=1024,
+                temperature=0.3,
+            )
         )
 
         raw = response.choices[0].message.content.strip()

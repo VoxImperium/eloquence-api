@@ -1,6 +1,7 @@
 # api/services/transcription.py
 # Transcription audio → texte avec Groq Whisper (gratuit)
 
+import asyncio
 import os
 import tempfile
 from pathlib import Path
@@ -24,11 +25,15 @@ async def transcribe_audio(audio_bytes: bytes, filename: str = "audio.wav") -> d
 
     try:
         with open(tmp_path, "rb") as audio_file:
-            response = client.audio.transcriptions.create(
-                model="whisper-large-v3",
-                file=(Path(tmp_path).name, audio_file, "audio/webm"),
-                language="fr",
-                response_format="verbose_json",
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: client.audio.transcriptions.create(
+                    model="whisper-large-v3",
+                    file=(Path(tmp_path).name, audio_file, "audio/webm"),
+                    language="fr",
+                    response_format="verbose_json",
+                )
             )
 
         # Extraire les segments si disponibles

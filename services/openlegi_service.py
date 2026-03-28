@@ -6,9 +6,11 @@ Endpoint : https://mcp.openlegi.fr/legifrance/mcp?token=<OPENLEGI_TOKEN>
 """
 
 import asyncio
+import html
 import json
 import logging
 import os
+import re
 
 from groq import Groq
 from mcp import ClientSession
@@ -45,6 +47,23 @@ def _extract_text(result) -> str:
     return ""
 
 
+_RE_OPENLEGI_HEADER = re.compile(r"RÉSULTATS JURISPRUDENCE")
+_RE_OPENLEGI_AFFICHAGE = re.compile(r"Affichage\s*:")
+_RE_OPENLEGI_SEPARATOR = re.compile(r"^[=\-]{10,}\s*$")
+
+
+def _clean_openlegi_text(text: str) -> str:
+    """Supprime les en-têtes et séparateurs techniques d'OpenLegi du texte brut."""
+    lines = text.split("\n")
+    cleaned = [
+        line for line in lines
+        if not _RE_OPENLEGI_HEADER.match(line)
+        and not _RE_OPENLEGI_AFFICHAGE.match(line)
+        and not _RE_OPENLEGI_SEPARATOR.match(line)
+    ]
+    return "\n".join(cleaned).strip()
+
+
 def _parse_result(text: str) -> list[dict]:
     """
     Tente de parser le texte retourné par OpenLegi.
@@ -67,6 +86,9 @@ def _parse_result(text: str) -> list[dict]:
             return [data]
     except json.JSONDecodeError:
         pass
+
+    # Nettoie les en-têtes OpenLegi avant de retourner le texte brut
+    text = _clean_openlegi_text(text)
 
     # Retourne le texte brut emballé dans un dict pour dégradation gracieuse
     return [{"resume": text, "source": "openlegi"}]
@@ -306,12 +328,14 @@ class OpenLegiService:
                 numero = numero or extracted.get("numero", "")
                 juridiction = juridiction or extracted.get("juridiction", "")
 
+        resume_text = str(item.get("resume", item.get("summary", "")))[:500]
         return {
             "id": item.get("id", ""),
             "date": date,
             "chambre": chambre,
             "solution": item.get("solution", ""),
-            "resume": str(item.get("resume", item.get("summary", "")))[:500],
+            "resume": resume_text,
+            "resume_html": f'<p style="text-align: justify">{html.escape(resume_text)}</p>',
             "themes": item.get("themes", []),
             "numero": numero,
             "juridiction": juridiction,

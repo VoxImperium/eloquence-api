@@ -5,16 +5,20 @@ Remplace Judilibre et Légifrance avec un service unifié.
 Endpoint : https://mcp.openlegi.fr/legifrance/mcp?token=<OPENLEGI_TOKEN>
 """
 
+import asyncio
 import json
 import logging
 import os
 
+from groq import Groq
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 logger = logging.getLogger(__name__)
 
 _OPENLEGI_BASE_URL = "https://mcp.openlegi.fr/legifrance/mcp"
+_GROQ_MODEL = "llama-3.3-70b-versatile"
+_groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 
 class OpenLegiError(Exception):
@@ -68,6 +72,56 @@ def _parse_result(text: str) -> list[dict]:
     return [{"resume": text, "source": "openlegi"}]
 
 
+async def extract_metadata_from_text(text: str) -> dict:
+    """
+    Utilise Groq pour extraire les métadonnées de jurisprudence depuis un texte brut.
+
+    Args:
+        text: Texte brut retourné par OpenLegi.
+
+    Returns:
+        Dict contenant juridiction, chambre, date (ISO) et numero, ou {} en cas d'échec.
+    """
+    if not text or not text.strip():
+        return {}
+
+    try:
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: _groq_client.chat.completions.create(
+                model=_GROQ_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Tu es un assistant juridique expert en droit français. "
+                            "Extrais les informations suivantes du texte juridique fourni "
+                            "et retourne UNIQUEMENT un objet JSON valide, sans markdown ni backticks : "
+                            '{"juridiction": "...", "chambre": "...", "date": "YYYY-MM-DD", "numero": "..."} '
+                            "Si une information est absente, utilise une chaîne vide. "
+                            "La date doit être au format ISO 8601 (YYYY-MM-DD). "
+                            "Le numéro de pourvoi ressemble à '14-83.462' ou '12-34.567'."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": text[:2000],
+                    },
+                ],
+                max_tokens=200,
+                temperature=0.1,
+            ),
+        )
+        raw = response.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        return json.loads(raw)
+    except Exception as exc:
+        logger.warning("extract_metadata_from_text error: %s", exc)
+        return {}
+
+
 class OpenLegiService:
     """Accès unifié à Légifrance via le serveur MCP OpenLegi."""
 
@@ -94,7 +148,11 @@ class OpenLegiService:
                     )
             text = _extract_text(result)
             items = _parse_result(text)
-            return [self._normalize_jurisprudence(item) for item in items[:limit]]
+            return list(
+                await asyncio.gather(
+                    *[self._normalize_jurisprudence(item) for item in items[:limit]]
+                )
+            )
         except OpenLegiError:
             raise
         except Exception as exc:
@@ -128,10 +186,13 @@ class OpenLegiService:
                     )
             text = _extract_text(result)
             items = _parse_result(text)
-            debug_results = []
-            for item in items[:limit]:
-                normalized = self._normalize_jurisprudence(item)
-                debug_results.append({"raw": item, "normalized": normalized})
+            normalized_items = await asyncio.gather(
+                *[self._normalize_jurisprudence(item) for item in items[:limit]]
+            )
+            debug_results = [
+                {"raw": item, "normalized": normalized}
+                for item, normalized in zip(items[:limit], normalized_items)
+            ]
             return debug_results
         except OpenLegiError:
             raise
@@ -177,9 +238,12 @@ class OpenLegiService:
                 f"Erreur lors de la recherche de textes : {exc}"
             ) from exc
 
-    @staticmethod
-    def _normalize_jurisprudence(item: dict) -> dict:
-        """Transforme une entrée brute en format uniforme (jurisprudence)."""
+    async def _normalize_jurisprudence(self, item: dict) -> dict:
+        """Transforme une entrée brute en format uniforme (jurisprudence).
+
+        Quand OpenLegi retourne du texte brut (champ `resume` uniquement),
+        utilise Groq pour en extraire les métadonnées structurées.
+        """
         logger.debug(
             "OpenLegi raw item keys: %s",
             list(item.keys()) if isinstance(item, dict) else type(item).__name__,
@@ -230,6 +294,17 @@ class OpenLegiService:
             type_decision = item.get("type_decision") or item.get("typeDecision") or ""
             if type_decision:
                 juridiction = type_decision
+
+        # Si les champs structurés sont vides, utiliser Groq pour extraire
+        # les métadonnées depuis le texte brut du résumé
+        if not any([date, chambre, numero, juridiction]):
+            resume_text = str(item.get("resume", item.get("summary", "")))
+            if resume_text:
+                extracted = await extract_metadata_from_text(resume_text)
+                date = date or extracted.get("date", "")
+                chambre = chambre or extracted.get("chambre", "")
+                numero = numero or extracted.get("numero", "")
+                juridiction = juridiction or extracted.get("juridiction", "")
 
         return {
             "id": item.get("id", ""),

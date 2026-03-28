@@ -105,6 +105,44 @@ class OpenLegiService:
                 f"Erreur lors de la recherche de jurisprudence : {exc}"
             ) from exc
 
+    async def search_jurisprudence_debug(self, query: str, limit: int = 3) -> list[dict]:
+        """
+        Recherche dans la jurisprudence et retourne les données brutes ET normalisées.
+
+        Args:
+            query: Termes de recherche.
+            limit: Nombre de résultats souhaité.
+
+        Returns:
+            Liste de dicts contenant les données brutes et normalisées pour chaque résultat.
+        """
+        logger.debug("OpenLegi search_jurisprudence_debug: query=%r", query)
+        try:
+            url = _build_url()
+            async with streamablehttp_client(url) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    result = await session.call_tool(
+                        "rechercher_jurisprudence_judiciaire",
+                        {"search": query, "page_size": limit},
+                    )
+            text = _extract_text(result)
+            items = _parse_result(text)
+            debug_results = []
+            for item in items[:limit]:
+                normalized = self._normalize_jurisprudence(item)
+                debug_results.append({"raw": item, "normalized": normalized})
+            return debug_results
+        except OpenLegiError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "OpenLegi search_jurisprudence_debug error for query=%r : %s", query, exc
+            )
+            raise OpenLegiError(
+                f"Erreur lors de la recherche de jurisprudence (debug) : {exc}"
+            ) from exc
+
     async def search_textes(self, query: str, limit: int = 5) -> list[dict]:
         """
         Recherche dans les codes juridiques via OpenLegi MCP.

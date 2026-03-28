@@ -436,6 +436,62 @@ async def health_db():
         logger.error("Erreur health OpenLegi : %s", e)
         return {"status": "error", "message": str(e), "service": "openlegi"}
 
+_EXPECTED_FIELDS = {
+    "date": ["date", "decision_date", "dateDecision", "date_decision", "dateCreation"],
+    "chambre": ["chambre", "chamber", "formation", "chamber_name", "type_affaire"],
+    "numero": ["numero", "number", "pourvoi", "reference", "num_decision", "id_decision"],
+    "juridiction": ["juridiction", "jurisdiction", "court", "court_name", "tribunal", "type_decision", "typeDecision"],
+}
+
+@router.get("/debug/openlegi")
+async def debug_openlegi(query: str = "cassation criminelle"):
+    """
+    Endpoint de débogage : expose les réponses brutes d'OpenLegi avant et après normalisation.
+
+    Retourne pour chaque résultat :
+    - raw : réponse brute d'OpenLegi (tous les champs)
+    - normalized : données après _normalize_jurisprudence()
+    - formatted : résultat de format_jurisprudence()
+    - field_comparison : quels champs attendus ont été trouvés ou manquent
+    """
+    try:
+        debug_items = await openlegi_service.search_jurisprudence_debug(query, limit=3)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": str(exc), "service": "openlegi", "query": query},
+        ) from exc
+
+    results = []
+    for entry in debug_items:
+        raw = entry["raw"]
+        normalized = entry["normalized"]
+        formatted = format_jurisprudence(normalized)
+
+        field_comparison: dict = {}
+        for field, variants in _EXPECTED_FIELDS.items():
+            found_key = next((k for k in variants if raw.get(k) not in (None, "", [])), None)
+            field_comparison[field] = {
+                "found": found_key is not None,
+                "found_key": found_key,
+                "value": raw.get(found_key) if found_key else None,
+                "normalized_value": normalized.get(field, ""),
+                "checked_keys": variants,
+            }
+
+        results.append({
+            "raw": raw,
+            "normalized": normalized,
+            "formatted": formatted,
+            "field_comparison": field_comparison,
+        })
+
+    return {
+        "query": query,
+        "count": len(results),
+        "results": results,
+    }
+
 @router.post("/cas-pratique")
 async def resoudre_cas_pratique(req: CasPratiqueRequest):
     """Résout un cas pratique et génère une plaidoirie complète"""

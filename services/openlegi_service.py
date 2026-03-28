@@ -329,13 +329,15 @@ class OpenLegiService:
                 juridiction = juridiction or extracted.get("juridiction", "")
 
         resume_text = str(item.get("resume", item.get("summary", "")))[:500]
+        resume_justified = f'<p style="text-align: justify">{html.escape(resume_text)}</p>'
         return {
             "id": item.get("id", ""),
             "date": date,
             "chambre": chambre,
             "solution": item.get("solution", ""),
             "resume": resume_text,
-            "resume_html": f'<p style="text-align: justify">{html.escape(resume_text)}</p>',
+            "resume_html": resume_justified,
+            "resume_styled": resume_justified,
             "themes": item.get("themes", []),
             "numero": numero,
             "juridiction": juridiction,

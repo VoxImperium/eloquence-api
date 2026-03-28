@@ -1,11 +1,14 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi.responses import Response
 from pydantic import BaseModel
 from groq import Groq
 import asyncio
 import logging
 import os, html, json, re
+from typing import List, Optional
 
 from services.openlegi_service import openlegi_service, OpenLegiError
+from utils.pdf_export import generate_analyse_pdf
 
 router = APIRouter(prefix="/legifrance", tags=["legifrance"])
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -639,3 +642,56 @@ async def extract_pdf(file: UploadFile = File(...)):
         raise
     except Exception as e:
         raise HTTPException(500, f"Erreur extraction PDF: {str(e)}")
+
+
+# ── Export PDF ────────────────────────────────────────────────────────────────
+
+class ArticleCite(BaseModel):
+    code: str = ""
+    numero: str = ""
+    texte: str = ""
+
+
+class JurisprudenceItem(BaseModel):
+    formatage_officiel: str = ""
+    resume: str = ""
+
+
+class AnalysePdfRequest(BaseModel):
+    qualification: str = ""
+    essence_du_drame: str = ""
+    tirade_oratoire: str = ""
+    strategie: str = ""
+    articles_cites: List[ArticleCite] = []
+    jurisprudence: List[JurisprudenceItem] = []
+
+
+@router.post("/export/analyse-pdf", tags=["legifrance"])
+async def export_analyse_pdf(req: AnalysePdfRequest):
+    """
+    Exporte l'analyse juridique complète en PDF avec le style Éloquence AI.
+
+    Retourne un fichier PDF incluant : qualification juridique, essence du drame,
+    stratégie juridique, plaidoirie, fondements juridiques et jurisprudences.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        pdf_bytes = await loop.run_in_executor(
+            None,
+            lambda: generate_analyse_pdf(
+                qualification=req.qualification,
+                essence_du_drame=req.essence_du_drame,
+                tirade_oratoire=req.tirade_oratoire,
+                strategie=req.strategie,
+                articles_cites=[a.model_dump() for a in req.articles_cites],
+                jurisprudence=[j.model_dump() for j in req.jurisprudence],
+            ),
+        )
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": 'attachment; filename="analyse-juridique.pdf"'},
+        )
+    except Exception as exc:
+        logger.error("Erreur génération PDF : %s", exc)
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la génération du PDF : {exc}") from exc

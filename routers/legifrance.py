@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from groq import Groq
 import asyncio
 import logging
-import os, json, re
+import os, html, json, re
 
 from services.openlegi_service import openlegi_service, OpenLegiError
 
@@ -195,6 +195,7 @@ async def search_judilibre(
         )
         j["formatage_officiel"] = formatage
         j["resume"] = clean_asterisks((j.get("resume") or "")[:200])
+        j["resume_html"] = f'<p style="text-align: justify">{html.escape(j["resume"])}</p>'
         j["apport_cas_pratique"] = await analyser_apport_jurisprudence(faits, qualification, j)
         enriched.append(j)
     return enriched

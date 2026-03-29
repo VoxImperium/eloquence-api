@@ -117,6 +117,16 @@ def _build_styles() -> dict[str, ParagraphStyle]:
             spaceAfter=8,
             leading=14,
         ),
+        "tirade_subheading": ParagraphStyle(
+            "tirade_subheading",
+            fontName="Helvetica-Bold",
+            fontSize=11,
+            textColor=_DARK_GREY,
+            alignment=TA_LEFT,
+            spaceBefore=10,
+            spaceAfter=4,
+            leading=16,
+        ),
         "footer": ParagraphStyle(
             "footer",
             fontName="Helvetica",
@@ -209,6 +219,51 @@ def _convert_markdown_to_html(text: str) -> str:
     return text
 
 
+_TIRADE_HEADERS = [
+    "EXORDE",
+    "NARRATION",
+    "CONFIRMATION",
+    "RÉFUTATION",
+    "PÉRORAISON",
+]
+
+
+def _parse_tirade_oratoire(text: str) -> list[tuple[str, str]]:
+    """Découpe la tirade oratoire en ses 5 parties constitutives.
+
+    Cherche les en-têtes (EXORDE, NARRATION, …) dans le texte et retourne
+    une liste de tuples (label, contenu) dans l'ordre d'apparition.
+    Si aucun en-tête n'est trouvé, retourne la chaîne entière sous un seul bloc.
+    """
+    # Build a regex that splits on any known header standing alone on a line
+    pattern = re.compile(
+        r'^(' + '|'.join(re.escape(h) for h in _TIRADE_HEADERS) + r')\s*$',
+        re.MULTILINE,
+    )
+
+    parts: list[tuple[str, str]] = []
+    last_label: str | None = None
+    last_end: int = 0
+
+    for m in pattern.finditer(text):
+        if last_label is not None:
+            content = text[last_end:m.start()].strip()
+            parts.append((last_label, content))
+        # Text before the first header is intentionally discarded
+        last_label = m.group(1)
+        last_end = m.end()
+
+    if last_label is not None:
+        # Remaining content after the last header
+        content = text[last_end:].strip()
+        parts.append((last_label, content))
+    else:
+        # No headers found — treat the whole block as a single unnamed part
+        parts.append(("", text.strip()))
+
+    return parts
+
+
 # ── Main builder ──────────────────────────────────────────────────────────────
 
 def generate_analyse_pdf(
@@ -298,7 +353,24 @@ def generate_analyse_pdf(
     story.append(Spacer(1, 0.3 * cm))
 
     # ── 4. Plaidoirie ─────────────────────────────────────────────────────────
-    story.extend(_section("4. Plaidoirie (tirade oratoire)", tirade_oratoire, styles))
+    story.append(Paragraph("4. Plaidoirie (tirade oratoire)", styles["section_heading"]))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=_GOLD, spaceAfter=4))
+
+    tirade_parts = _parse_tirade_oratoire(tirade_oratoire)
+    if tirade_parts:
+        for idx, (label, content) in enumerate(tirade_parts):
+            if label:
+                story.append(Paragraph(label, styles["tirade_subheading"]))
+            if content:
+                story.append(Paragraph(_convert_markdown_to_html(_escape(content)), styles["body"]))
+            else:
+                story.append(Paragraph("<i>Non renseigné</i>", styles["body"]))
+            if idx < len(tirade_parts) - 1:
+                story.append(Spacer(1, 0.2 * cm))
+                story.append(HRFlowable(width="100%", thickness=0.3, color=_LIGHT_GREY, spaceAfter=4))
+    else:
+        story.append(Paragraph("<i>Non renseigné</i>", styles["body"]))
+
     story.append(Spacer(1, 0.3 * cm))
 
     # ── 5. Fondements juridiques ──────────────────────────────────────────────

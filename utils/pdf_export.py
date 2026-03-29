@@ -9,6 +9,7 @@ fondements juridiques et jurisprudences.
 from __future__ import annotations
 
 import io
+import re
 from datetime import datetime
 from typing import Any
 
@@ -181,7 +182,7 @@ def _section(title: str, content: str, styles: dict) -> list:
     elems.append(Paragraph(title, styles["section_heading"]))
     elems.append(HRFlowable(width="100%", thickness=0.5, color=_GOLD, spaceAfter=4))
     if content and content.strip():
-        elems.append(Paragraph(_escape(content), styles["body"]))
+        elems.append(Paragraph(_convert_markdown_to_html(_escape(content)), styles["body"]))
     else:
         elems.append(Paragraph("<i>Non renseigné</i>", styles["body"]))
     return elems
@@ -195,6 +196,17 @@ def _escape(text: str) -> str:
             .replace(">", "&gt;")
             .replace('"', "&quot;")
     )
+
+
+def _convert_markdown_to_html(text: str) -> str:
+    """Convertit le formatage markdown en balises HTML compatibles ReportLab.
+
+    Doit être appelé APRÈS _escape() afin que les caractères spéciaux XML
+    soient déjà échappés avant l'injection des balises HTML.
+    """
+    # **texte** → <b>texte</b> (limité à une seule ligne pour éviter les balises mal formées)
+    text = re.sub(r'\*\*([^\n]+?)\*\*', r'<b>\1</b>', text)
+    return text
 
 
 # ── Main builder ──────────────────────────────────────────────────────────────

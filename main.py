@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import analysis, emails as emails_router, legifrance as legifrance_router, payments, simulation, training, speech_analysis
+from routers import analysis, chat as chat_router, emails as emails_router, legifrance as legifrance_router, payments, simulation, training, speech_analysis
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,7 @@ app.add_middleware(
 )
 
 app.include_router(analysis.router)
+app.include_router(chat_router.router)
 app.include_router(emails_router.router)
 app.include_router(legifrance_router.router)
 app.include_router(payments.router)

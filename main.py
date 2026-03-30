@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     logger.info("Démarrage de l'API Éloquence")
     from services.legalbert_service import classifier as _legalbert_classifier
     if _legalbert_classifier is not None:
-        logger.info("✅ LEGAL-BERT EU chargé en FP16")
+        logger.info("✅ LEGAL-BERT EU chargé en FP32")
     else:
         logger.warning("⚠️ LEGAL-BERT EU non disponible")
 

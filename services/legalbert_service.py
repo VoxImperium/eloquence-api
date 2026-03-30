@@ -5,7 +5,7 @@ import psutil
 
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = os.getenv("LEGALBERT_MODEL", "minixxie/legal-bert-eur-lex-base-uncased")
+MODEL_NAME = os.getenv("LEGALBERT_MODEL", "nlpaueb/legal-bert-base-uncased")
 
 classifier = None
 

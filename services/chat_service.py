@@ -58,15 +58,42 @@ class ChatService:
     async def _fetch_sources(
         self, query: str
     ) -> tuple[list[dict], list[dict]]:
-        """Recherche simultanée jurisprudence + textes (3 résultats chacun)."""
+        """Recherche indépendante jurisprudence + textes (3 résultats chacun).
+
+        Chaque source est traitée indépendamment : une erreur sur la jurisprudence
+        ne bloque pas la récupération des textes, et vice versa.
+        """
+        jurisprudence: list[dict] = []
+        textes: list[dict] = []
+
         try:
-            jurisprudence, textes = await asyncio.gather(
-                openlegi_service.search_jurisprudence(query, limit=3),
-                openlegi_service.search_textes(query, limit=3),
-            )
+            jurisprudence = await openlegi_service.search_jurisprudence(query, limit=3)
         except OpenLegiError:
-            logger.warning("OpenLégi indisponible pour query=%r — fallback vide", query)
-            jurisprudence, textes = [], []
+            logger.warning(
+                "OpenLégi indisponible (jurisprudence) pour query=%r — fallback vide",
+                query,
+            )
+        except Exception as exc:
+            logger.error(
+                "Erreur inattendue lors de la recherche jurisprudence pour query=%r : %s",
+                query,
+                exc,
+            )
+
+        try:
+            textes = await openlegi_service.search_textes(query, limit=3)
+        except OpenLegiError:
+            logger.warning(
+                "OpenLégi indisponible (textes) pour query=%r — fallback vide",
+                query,
+            )
+        except Exception as exc:
+            logger.error(
+                "Erreur inattendue lors de la recherche textes pour query=%r : %s",
+                query,
+                exc,
+            )
+
         return jurisprudence, textes
 
     @staticmethod

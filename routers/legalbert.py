@@ -12,7 +12,7 @@ class LegalTextRequest(BaseModel):
 
 @router.post("/analyze")
 async def analyze(request: LegalTextRequest):
-    """Analyse un texte légal EU avec LEGAL-BERT EU (FP16, zéro coût)."""
+    """Analyse un texte légal EU avec LEGAL-BERT EU (FP32, zéro coût)."""
     result = await analyze_legal_text(request.text)
 
     if "error_type" in result:

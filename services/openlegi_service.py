@@ -245,7 +245,7 @@ class OpenLegiService:
                     await session.initialize()
                     result = await session.call_tool(
                         "rechercher_code",
-                        {"search": query, "page_size": limit},
+                        {"codeQuery": query, "pageSize": limit},
                     )
             text = _extract_text(result)
             items = _parse_result(text)

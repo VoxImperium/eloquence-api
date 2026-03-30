@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import analysis, chat as chat_router, emails as emails_router, legifrance as legifrance_router, payments, simulation, training, speech_analysis
+from routers import analysis, chat as chat_router, emails as emails_router, legifrance as legifrance_router, payments, simulation, training, speech_analysis, legalbert as legalbert_router
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,11 @@ async def lifespan(app: FastAPI):
     # ── Startup ────────────────────────────────────────────────────────────────
     logging.basicConfig(level=logging.INFO)
     logger.info("Démarrage de l'API Éloquence")
+    from services.legalbert_service import classifier as _legalbert_classifier
+    if _legalbert_classifier is not None:
+        logger.info("✅ LEGAL-BERT EU chargé en INT8")
+    else:
+        logger.warning("⚠️ LEGAL-BERT EU non disponible")
 
     yield
 
@@ -27,7 +32,7 @@ async def lifespan(app: FastAPI):
     logger.info("Arrêt de l'API Éloquence")
 
 
-app = FastAPI(title="Éloquence API", version="0.7.0", lifespan=lifespan)
+app = FastAPI(title="Éloquence API", version="0.7.1", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,10 +50,11 @@ app.include_router(payments.router)
 app.include_router(simulation.router)
 app.include_router(training.router)
 app.include_router(speech_analysis.router)
+app.include_router(legalbert_router.router)
 
 @app.get("/")
 def root():
-    return {"status": "ok", "version": "0.7.0"}
+    return {"status": "ok", "version": "0.7.1"}
 
 @app.get("/health")
 def health():

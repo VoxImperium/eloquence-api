@@ -14,3 +14,7 @@ audioread==3.0.1
 pypdf==4.3.1
 mcp==1.23.3
 reportlab==4.2.5
+transformers==4.41.0
+torch==2.1.2
+bitsandbytes==0.43.0
+psutil==5.9.8

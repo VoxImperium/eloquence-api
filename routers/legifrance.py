@@ -8,6 +8,8 @@ import os, html, json, re
 from typing import List, Optional
 
 from services.openlegi_service import openlegi_service, OpenLegiError
+from services.legalbert_service import analyze_legal_text
+from schemas.analyze_text import AnalyzeTextRequest, AnalyzeTextResponse
 from utils.pdf_export import generate_analyse_pdf
 
 router = APIRouter(prefix="/legifrance", tags=["legifrance"])
@@ -831,3 +833,86 @@ async def export_analyse_pdf(req: AnalysePdfRequest):
     except Exception as exc:
         logger.error("Erreur génération PDF : %s", exc)
         raise HTTPException(status_code=500, detail=f"Erreur lors de la génération du PDF : {exc}") from exc
+
+
+# ── Analyse texte légal avec LegalBert ───────────────────────────────────────
+
+def _extract_legal_score_and_classification(bert_result: dict) -> tuple[float | None, str]:
+    """Extrait le score de légalité et la classification du résultat LegalBert.
+
+    Returns:
+        Tuple (legal_score, classification) où classification est "LEGAL" ou "NON-LEGAL".
+    """
+    results = bert_result.get("results")
+    if not results:
+        return None, "NON-LEGAL"
+    label = results[0].get("label", "")
+    score = results[0].get("score")
+    if score is None:
+        return None, "NON-LEGAL"
+    # LABEL_1 = classe légale positive ; LABEL_0 = négative
+    if label == "LABEL_1":
+        legal_score = float(score)
+        classification = "LEGAL"
+    else:
+        legal_score = float(1.0 - score)
+        classification = "LEGAL" if legal_score >= 0.5 else "NON-LEGAL"
+    return legal_score, classification
+
+
+@router.post("/analyze-texte-avec-bert", response_model=AnalyzeTextResponse)
+async def analyze_legal_text_with_sources(request: AnalyzeTextRequest):
+    """
+    Analyse un texte légal (LegalBert) et enrichit avec jurisprudence auto.
+
+    - Score le texte avec LegalBert
+    - Si score < 0.7 → retourne classification + score uniquement
+    - Si score >= 0.7 et search_jurisprudence=True → recherche OpenLegi async
+    - Retourne classification + sources pertinentes
+    """
+    bert_result = await analyze_legal_text(request.text)
+
+    if "error_type" in bert_result:
+        if bert_result["error_type"] == "validation_error":
+            raise HTTPException(status_code=400, detail=bert_result["error"])
+        raise HTTPException(status_code=500, detail=bert_result["error"])
+
+    legal_score, classification = _extract_legal_score_and_classification(bert_result)
+    if legal_score is None:
+        raise HTTPException(status_code=500, detail="Résultat LegalBert invalide")
+
+    latency_ms = bert_result.get("latency_ms", 0.0)
+
+    response: dict = {
+        "text": request.text,
+        "classification": classification,
+        "legal_score": legal_score,
+        "latency_ms": latency_ms,
+        "jurisprudence": None,
+        "textes": None,
+    }
+
+    # Recherche jurisprudence + textes si score suffisamment élevé
+    if legal_score >= 0.7 and request.search_jurisprudence:
+        query = request.text[:200]  # Limite raisonnable pour une requête de recherche OpenLegi
+        try:
+            jurisprudence, textes = await asyncio.gather(
+                openlegi_service.search_jurisprudence(query, limit=3),
+                openlegi_service.search_textes(query, limit=3),
+            )
+            response["jurisprudence"] = jurisprudence
+            response["textes"] = textes
+        except OpenLegiError as exc:
+            logger.warning(
+                "OpenLegi indisponible pour analyze-texte-avec-bert : %s", exc
+            )
+            response["jurisprudence"] = []
+            response["textes"] = []
+        except Exception as exc:
+            logger.warning(
+                "Erreur inattendue OpenLegi dans analyze-texte-avec-bert : %s", exc
+            )
+            response["jurisprudence"] = []
+            response["textes"] = []
+
+    return response

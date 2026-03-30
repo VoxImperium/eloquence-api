@@ -16,7 +16,7 @@ try:
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModelForSequenceClassification.from_pretrained(
         MODEL_NAME,
-        load_in_8bit=True,
+        torch_dtype=torch.float16,
         device_map="cpu",
         ignore_mismatched_sizes=True,
     )
@@ -27,14 +27,14 @@ try:
         tokenizer=tokenizer,
         device=-1,
     )
-    logger.info("✅ LEGAL-BERT EU chargé en INT8 (~150MB RAM) — modèle : %s", MODEL_NAME)
+    logger.info("✅ LEGAL-BERT EU chargé en FP16 (~210MB RAM) — modèle : %s", MODEL_NAME)
 except Exception as exc:
     logger.error("❌ Erreur chargement LEGAL-BERT EU : %s", exc)
     classifier = None
 
 
 async def analyze_legal_text(text: str) -> dict:
-    """Analyse un texte légal EU avec LEGAL-BERT EU (INT8, sans coût d'API)."""
+    """Analyse un texte légal EU avec LEGAL-BERT EU (FP16, sans coût d'API)."""
     if not text or len(text.strip()) < 10:
         return {
             "error": "Texte trop court (minimum 10 caractères)",
